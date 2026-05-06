@@ -1,12 +1,9 @@
 import json
 import os
-import sqlite3
-import threading
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import Any
-from urllib import error, parse, request
+from urllib import request
 
 import psycopg
 from fastapi import FastAPI, HTTPException
@@ -17,14 +14,8 @@ from psycopg.rows import dict_row
 
 APP_TITLE = "Gwen Prompt Gym"
 LEARNER_NAME = "Gwen"
-DB_PATH = Path("/tmp/gwen_prompt_gym.sqlite3")
-BLOB_PATHNAME = "data/gwen-prompt-gym.sqlite3"
-DB_LOCK = threading.RLock()
-BLOB_API_URL = "https://vercel.com/api/blob"
-BLOB_API_VERSION = "12"
 DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
-DB_BACKEND = "postgres" if DATABASE_URL else "sqlite"
-
+OPENAI_RECOMMENDER_MODEL = os.getenv("OPENAI_RECOMMENDER_MODEL", "gpt-4.1-mini")
 
 TASKS = [
     {
@@ -94,102 +85,10 @@ TASKS = [
         "badge": "Room Runner",
     },
 ]
-
 TASK_LOOKUP = {task["id"]: task for task in TASKS}
+SCHEMA_READY = False
 
-
-class SubmitTaskPayload(BaseModel):
-    learner_name: str = Field(default=LEARNER_NAME)
-    task_id: str
-    response_text: str = Field(min_length=8, max_length=4000)
-    gwen_feedback: str = Field(min_length=2, max_length=500)
-
-
-class BlobStore:
-    def __init__(self, token: str | None):
-        self.token = token
-        self.store_id = self._extract_store_id(token) if token else None
-
-    @staticmethod
-    def _extract_store_id(token: str | None) -> str | None:
-        if not token:
-            return None
-        parts = token.split("_")
-        return parts[3] if len(parts) > 3 else None
-
-    @property
-    def enabled(self) -> bool:
-        return bool(self.token and self.store_id)
-
-    def _blob_url(self, pathname: str) -> str:
-        return f"https://{self.store_id}.private.blob.vercel-storage.com/{pathname}"
-
-    def download(self, pathname: str) -> bytes | None:
-        if not self.enabled:
-            return None
-        req = request.Request(
-            self._blob_url(pathname),
-            headers={"Authorization": f"Bearer {self.token}"},
-            method="GET",
-        )
-        try:
-            with request.urlopen(req, timeout=20) as response:
-                return response.read()
-        except error.HTTPError as exc:
-            if exc.code == 404:
-                return None
-            raise
-
-    def upload(self, pathname: str, content: bytes) -> dict[str, Any]:
-        if not self.enabled:
-            return {"storage": "local-only"}
-        params = parse.urlencode({"pathname": pathname})
-        req = request.Request(
-            f"{BLOB_API_URL}/?{params}",
-            data=content,
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "x-api-version": BLOB_API_VERSION,
-                "x-vercel-blob-access": "private",
-                "x-add-random-suffix": "0",
-                "x-allow-overwrite": "1",
-                "x-content-type": "application/octet-stream",
-                "Content-Type": "application/octet-stream",
-                "x-content-length": str(len(content)),
-            },
-            method="PUT",
-        )
-        with request.urlopen(req, timeout=30) as response:
-            return json.loads(response.read().decode("utf-8"))
-
-
-blob_store = BlobStore(os.getenv("BLOB_READ_WRITE_TOKEN"))
-app = FastAPI(title=APP_TITLE)
-_db_initialized = False
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def today_iso() -> str:
-    return date.today().isoformat()
-
-
-def calculate_streak(last_completed_on: str | None, today: str, current_streak: int) -> int:
-    if not last_completed_on:
-        return 1
-    last_date = date.fromisoformat(str(last_completed_on))
-    today_date = date.fromisoformat(today)
-    delta_days = (today_date - last_date).days
-    if delta_days == 0:
-        return current_streak
-    if delta_days == 1:
-        return current_streak + 1
-    return 1
-
-
-POSTGRES_SCHEMA_SQL = """
+SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS learners (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -221,45 +120,39 @@ CREATE TABLE IF NOT EXISTS badges (
 );
 """
 
-SQLITE_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS learners (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    created_at TEXT NOT NULL,
-    total_points INTEGER NOT NULL DEFAULT 0,
-    skill_level INTEGER NOT NULL DEFAULT 1,
-    streak_days INTEGER NOT NULL DEFAULT 0,
-    last_completed_on TEXT,
-    feedback_summary TEXT NOT NULL DEFAULT ''
-);
 
-CREATE TABLE IF NOT EXISTS task_attempts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    learner_id INTEGER NOT NULL,
-    task_id TEXT NOT NULL,
-    response_text TEXT NOT NULL,
-    coach_feedback TEXT NOT NULL,
-    gwen_feedback TEXT NOT NULL,
-    points_awarded INTEGER NOT NULL,
-    completed_at TEXT NOT NULL,
-    FOREIGN KEY (learner_id) REFERENCES learners(id)
-);
-
-CREATE TABLE IF NOT EXISTS badges (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    learner_id INTEGER NOT NULL,
-    badge_name TEXT NOT NULL,
-    awarded_at TEXT NOT NULL,
-    UNIQUE (learner_id, badge_name),
-    FOREIGN KEY (learner_id) REFERENCES learners(id)
-);
-"""
+class SubmitTaskPayload(BaseModel):
+    learner_name: str = Field(default=LEARNER_NAME)
+    task_id: str
+    response_text: str = Field(min_length=8, max_length=4000)
+    gwen_feedback: str = Field(min_length=2, max_length=500)
 
 
-def initialize_postgres_db() -> None:
-    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+app = FastAPI(title=APP_TITLE)
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def today_iso() -> str:
+    return date.today().isoformat()
+
+
+def require_database_url() -> str:
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL is required. This app now uses Neon Postgres only.")
+    return DATABASE_URL
+
+
+def ensure_schema() -> None:
+    global SCHEMA_READY
+    if SCHEMA_READY:
+        return
+    database_url = require_database_url()
+    with psycopg.connect(database_url, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
-            cur.execute(POSTGRES_SCHEMA_SQL)
+            cur.execute(SCHEMA_SQL)
             cur.execute(
                 """
                 INSERT INTO learners (name, created_at, total_points, skill_level, streak_days, feedback_summary)
@@ -269,57 +162,14 @@ def initialize_postgres_db() -> None:
                 (LEARNER_NAME, utc_now(), "Fresh start. Gwen is warming up her strategic prompting muscles."),
             )
         conn.commit()
-
-
-def initialize_sqlite_db() -> None:
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        conn.executescript(SQLITE_SCHEMA_SQL)
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO learners (
-                name, created_at, total_points, skill_level, streak_days, feedback_summary
-            ) VALUES (?, ?, 0, 1, 0, ?)
-            """,
-            (LEARNER_NAME, utc_now(), "Fresh start. Gwen is warming up her strategic prompting muscles."),
-        )
-        conn.commit()
-    persist_sqlite_db()
-
-
-def ensure_db_loaded() -> None:
-    global _db_initialized
-    with DB_LOCK:
-        if _db_initialized:
-            return
-        if DB_BACKEND == "postgres":
-            initialize_postgres_db()
-            _db_initialized = True
-            return
-        if not DB_PATH.exists():
-            snapshot = blob_store.download(BLOB_PATHNAME)
-            if snapshot:
-                DB_PATH.write_bytes(snapshot)
-        initialize_sqlite_db()
-        _db_initialized = True
+    SCHEMA_READY = True
 
 
 @contextmanager
 def db_conn():
-    ensure_db_loaded()
-    if DB_BACKEND == "postgres":
-        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
-            yield conn
-    else:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            yield conn
-
-
-def persist_sqlite_db() -> None:
-    if DB_BACKEND != "sqlite" or not DB_PATH.exists():
-        return
-    blob_store.upload(BLOB_PATHNAME, DB_PATH.read_bytes())
+    ensure_schema()
+    with psycopg.connect(require_database_url(), row_factory=dict_row) as conn:
+        yield conn
 
 
 def row_get(row: Any, key: str) -> Any:
@@ -327,59 +177,35 @@ def row_get(row: Any, key: str) -> Any:
 
 
 def get_learner(conn: Any, learner_name: str = LEARNER_NAME) -> Any:
-    if DB_BACKEND == "postgres":
-        learner = conn.execute("SELECT * FROM learners WHERE name = %s", (learner_name,)).fetchone()
-    else:
-        learner = conn.execute("SELECT * FROM learners WHERE name = ?", (learner_name,)).fetchone()
+    learner = conn.execute("SELECT * FROM learners WHERE name = %s", (learner_name,)).fetchone()
     if not learner:
         raise HTTPException(status_code=404, detail="Learner not found")
     return learner
 
 
 def get_attempted_task_ids(conn: Any, learner_id: int) -> list[str]:
-    if DB_BACKEND == "postgres":
-        rows = conn.execute(
-            "SELECT task_id FROM task_attempts WHERE learner_id = %s ORDER BY completed_at DESC",
-            (learner_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT task_id FROM task_attempts WHERE learner_id = ? ORDER BY completed_at DESC",
-            (learner_id,),
-        ).fetchall()
+    rows = conn.execute(
+        "SELECT task_id FROM task_attempts WHERE learner_id = %s ORDER BY completed_at DESC",
+        (learner_id,),
+    ).fetchall()
     return [row_get(row, "task_id") for row in rows]
 
 
 def summarize_progress(conn: Any, learner: Any) -> dict[str, Any]:
     learner_id = row_get(learner, "id")
-    if DB_BACKEND == "postgres":
-        attempts = conn.execute(
-            """
-            SELECT task_id, points_awarded, coach_feedback, gwen_feedback, completed_at
-            FROM task_attempts
-            WHERE learner_id = %s
-            ORDER BY completed_at DESC
-            """,
-            (learner_id,),
-        ).fetchall()
-        badges = conn.execute(
-            "SELECT badge_name FROM badges WHERE learner_id = %s ORDER BY awarded_at",
-            (learner_id,),
-        ).fetchall()
-    else:
-        attempts = conn.execute(
-            """
-            SELECT task_id, points_awarded, coach_feedback, gwen_feedback, completed_at
-            FROM task_attempts
-            WHERE learner_id = ?
-            ORDER BY completed_at DESC
-            """,
-            (learner_id,),
-        ).fetchall()
-        badges = conn.execute(
-            "SELECT badge_name FROM badges WHERE learner_id = ? ORDER BY awarded_at",
-            (learner_id,),
-        ).fetchall()
+    attempts = conn.execute(
+        """
+        SELECT task_id, points_awarded, coach_feedback, gwen_feedback, completed_at
+        FROM task_attempts
+        WHERE learner_id = %s
+        ORDER BY completed_at DESC
+        """,
+        (learner_id,),
+    ).fetchall()
+    badges = conn.execute(
+        "SELECT badge_name FROM badges WHERE learner_id = %s ORDER BY awarded_at",
+        (learner_id,),
+    ).fetchall()
     attempted_ids = [row_get(row, "task_id") for row in attempts]
     completion_ratio = round(len(attempted_ids) / len(TASKS), 2)
     return {
@@ -439,7 +265,7 @@ def recommend_next_task_with_llm(learner: Any, progress: dict[str, Any]) -> tupl
         return fallback, "Heuristic pick because OPENAI_API_KEY is missing."
 
     payload = {
-        "model": os.getenv("OPENAI_RECOMMENDER_MODEL", "gpt-4.1-mini"),
+        "model": OPENAI_RECOMMENDER_MODEL,
         "input": [
             {
                 "role": "system",
@@ -481,7 +307,10 @@ def recommend_next_task_with_llm(learner: Any, progress: dict[str, Any]) -> tupl
                 "name": "task_recommendation",
                 "schema": {
                     "type": "object",
-                    "properties": {"task_id": {"type": "string"}, "reason": {"type": "string"}},
+                    "properties": {
+                        "task_id": {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
                     "required": ["task_id", "reason"],
                     "additionalProperties": False,
                 },
@@ -491,7 +320,10 @@ def recommend_next_task_with_llm(learner: Any, progress: dict[str, Any]) -> tupl
     req = request.Request(
         "https://api.openai.com/v1/responses",
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         method="POST",
     )
     try:
@@ -520,6 +352,19 @@ def award_points(task: dict[str, Any], response_text: str, gwen_feedback: str) -
     return points, feedback
 
 
+def calculate_streak(last_completed_on: str | None, today: str, current_streak: int) -> int:
+    if not last_completed_on:
+        return 1
+    last_date = date.fromisoformat(str(last_completed_on))
+    today_date = date.fromisoformat(today)
+    delta_days = (today_date - last_date).days
+    if delta_days == 0:
+        return current_streak
+    if delta_days == 1:
+        return current_streak + 1
+    return 1
+
+
 @app.exception_handler(Exception)
 async def handle_exception(_request, exc: Exception):
     if isinstance(exc, HTTPException):
@@ -535,9 +380,12 @@ def profile_state():
         next_task, reason = recommend_next_task_with_llm(learner, progress)
         return {
             "app_title": APP_TITLE,
-            "storage_mode": "neon-postgres" if DB_BACKEND == "postgres" else ("vercel-blob-snapshotted-sqlite" if blob_store.enabled else "local-sqlite"),
+            "storage_mode": "neon-postgres",
             "profile": progress,
-            "levels": {"current": row_get(learner, "skill_level"), "next_level_points": row_get(learner, "skill_level") * 240},
+            "levels": {
+                "current": row_get(learner, "skill_level"),
+                "next_level_points": row_get(learner, "skill_level") * 240,
+            },
             "next_task": {**next_task, "recommendation_reason": reason},
         }
 
@@ -570,117 +418,98 @@ def submit_task(payload: SubmitTaskPayload):
     if not task:
         raise HTTPException(status_code=400, detail="Unknown task")
 
-    with DB_LOCK:
-        with db_conn() as conn:
-            learner = get_learner(conn, payload.learner_name)
-            learner_id = row_get(learner, "id")
-            points, coach_feedback = award_points(task, payload.response_text, payload.gwen_feedback)
-            completed_at = utc_now()
+    with db_conn() as conn:
+        learner = get_learner(conn, payload.learner_name)
+        learner_id = row_get(learner, "id")
+        points, coach_feedback = award_points(task, payload.response_text, payload.gwen_feedback)
+        completed_at = utc_now()
 
-            if DB_BACKEND == "postgres":
-                conn.execute(
-                    """
-                    INSERT INTO task_attempts (
-                        learner_id, task_id, response_text, coach_feedback, gwen_feedback, points_awarded, completed_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        learner_id,
-                        task["id"],
-                        payload.response_text.strip(),
-                        coach_feedback,
-                        payload.gwen_feedback.strip(),
-                        points,
-                        completed_at,
-                    ),
-                )
-                conn.execute(
-                    """
-                    INSERT INTO badges (learner_id, badge_name, awarded_at)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (learner_id, badge_name) DO NOTHING
-                    """,
-                    (learner_id, task["badge"], completed_at),
-                )
-            else:
-                conn.execute(
-                    """
-                    INSERT INTO task_attempts (
-                        learner_id, task_id, response_text, coach_feedback, gwen_feedback, points_awarded, completed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        learner_id,
-                        task["id"],
-                        payload.response_text.strip(),
-                        coach_feedback,
-                        payload.gwen_feedback.strip(),
-                        points,
-                        completed_at,
-                    ),
-                )
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO badges (learner_id, badge_name, awarded_at)
-                    VALUES (?, ?, ?)
-                    """,
-                    (learner_id, task["badge"], completed_at),
-                )
+        conn.execute(
+            """
+            INSERT INTO task_attempts (
+                learner_id, task_id, response_text, coach_feedback, gwen_feedback, points_awarded, completed_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                learner_id,
+                task["id"],
+                payload.response_text.strip(),
+                coach_feedback,
+                payload.gwen_feedback.strip(),
+                points,
+                completed_at,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO badges (learner_id, badge_name, awarded_at)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (learner_id, badge_name) DO NOTHING
+            """,
+            (learner_id, task["badge"], completed_at),
+        )
 
-            today = today_iso()
-            streak_days = calculate_streak(row_get(learner, "last_completed_on"), today, row_get(learner, "streak_days"))
-            total_points = row_get(learner, "total_points") + points
-            skill_level = max(1, min(3, 1 + total_points // 240))
-            completion_count = len(get_attempted_task_ids(conn, learner_id))
-            feedback_summary = (
-                f"Latest reflection: {payload.gwen_feedback.strip()} | "
-                f"Recent strength: {task['focus']} | Total completions: {completion_count}"
-            )
+        today = today_iso()
+        streak_days = calculate_streak(row_get(learner, "last_completed_on"), today, row_get(learner, "streak_days"))
+        total_points = row_get(learner, "total_points") + points
+        skill_level = max(1, min(3, 1 + total_points // 240))
+        completion_count = len(get_attempted_task_ids(conn, learner_id))
+        feedback_summary = (
+            f"Latest reflection: {payload.gwen_feedback.strip()} | "
+            f"Recent strength: {task['focus']} | Total completions: {completion_count}"
+        )
 
-            if DB_BACKEND == "postgres":
-                conn.execute(
-                    """
-                    UPDATE learners
-                    SET total_points = %s, skill_level = %s, streak_days = %s, last_completed_on = %s, feedback_summary = %s
-                    WHERE id = %s
-                    """,
-                    (total_points, skill_level, streak_days, today, feedback_summary, learner_id),
-                )
-            else:
-                conn.execute(
-                    """
-                    UPDATE learners
-                    SET total_points = ?, skill_level = ?, streak_days = ?, last_completed_on = ?, feedback_summary = ?
-                    WHERE id = ?
-                    """,
-                    (total_points, skill_level, streak_days, today, feedback_summary, learner_id),
-                )
-            conn.commit()
-            persist_sqlite_db()
+        conn.execute(
+            """
+            UPDATE learners
+            SET total_points = %s, skill_level = %s, streak_days = %s, last_completed_on = %s, feedback_summary = %s
+            WHERE id = %s
+            """,
+            (total_points, skill_level, streak_days, today, feedback_summary, learner_id),
+        )
+        conn.commit()
 
-        with db_conn() as read_conn:
-            learner = get_learner(read_conn, payload.learner_name)
-            progress = summarize_progress(read_conn, learner)
-            next_task_data, reason = recommend_next_task_with_llm(learner, progress)
-            return {
-                "result": {
-                    "points_awarded": points,
-                    "coach_feedback": coach_feedback,
-                    "badge_unlocked": task["badge"],
-                },
-                "profile": progress,
-                "next_task": {**next_task_data, "recommendation_reason": reason},
-            }
+    with db_conn() as read_conn:
+        learner = get_learner(read_conn, payload.learner_name)
+        progress = summarize_progress(read_conn, learner)
+        next_task_data, reason = recommend_next_task_with_llm(learner, progress)
+        return {
+            "result": {
+                "points_awarded": points,
+                "coach_feedback": coach_feedback,
+                "badge_unlocked": task["badge"],
+            },
+            "profile": progress,
+            "next_task": {**next_task_data, "recommendation_reason": reason},
+        }
 
 
 @app.get("/api/health")
 def health():
-    ensure_db_loaded()
-    return {
-        "ok": True,
-        "app": APP_TITLE,
-        "db_backend": DB_BACKEND,
-        "db_exists": True if DB_BACKEND == "postgres" else DB_PATH.exists(),
-        "blob_enabled": blob_store.enabled,
-        "database_url_present": bool(DATABASE_URL),
-    }
+    try:
+        ensure_schema()
+        with db_conn() as conn:
+            table_rows = conn.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name IN ('learners', 'task_attempts', 'badges')
+                ORDER BY table_name
+                """
+            ).fetchall()
+        return {
+            "ok": True,
+            "app": APP_TITLE,
+            "db_backend": "postgres",
+            "database_url_present": bool(DATABASE_URL),
+            "tables": [row_get(row, "table_name") for row in table_rows],
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "app": APP_TITLE,
+            "db_backend": "postgres",
+            "database_url_present": bool(DATABASE_URL),
+            "error": str(exc),
+        }
