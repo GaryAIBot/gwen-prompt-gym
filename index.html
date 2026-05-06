@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gwen Prompt Gym</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero card">
+        <p class="eyebrow">Micro-learning for leadership prompting</p>
+        <h1>Gwen Prompt Gym</h1>
+        <p class="subhead">
+          Tiny strategy drills. Better prompts. Cleaner executive thinking.
+        </p>
+        <div class="hero-grid">
+          <div>
+            <span class="label">Level</span>
+            <strong id="levelValue">-</strong>
+          </div>
+          <div>
+            <span class="label">Points</span>
+            <strong id="pointsValue">-</strong>
+          </div>
+          <div>
+            <span class="label">Streak</span>
+            <strong id="streakValue">-</strong>
+          </div>
+          <div>
+            <span class="label">Badges</span>
+            <strong id="badgeValue">-</strong>
+          </div>
+        </div>
+        <div class="meter-wrap">
+          <div class="meter-label">
+            <span>Progress meter</span>
+            <span id="meterText">0%</span>
+          </div>
+          <div class="meter">
+            <div class="meter-fill" id="meterFill"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="task card">
+        <div class="task-topline">
+          <p class="eyebrow">Next recommended drill</p>
+          <button id="refreshTaskButton" class="ghost">Shuffle wisely</button>
+        </div>
+        <h2 id="taskTitle">Loading…</h2>
+        <p class="task-tagline" id="taskTagline"></p>
+        <div class="chips">
+          <span class="chip" id="taskLevelChip"></span>
+          <span class="chip" id="taskPointsChip"></span>
+          <span class="chip" id="taskFocusChip"></span>
+        </div>
+        <div class="task-copy">
+          <p><strong>Scenario:</strong> <span id="taskScenario"></span></p>
+          <p><strong>Your move:</strong> <span id="taskInstructions"></span></p>
+          <p class="reason" id="taskReason"></p>
+        </div>
+        <form id="taskForm">
+          <label for="responseText">Draft Gwen’s prompt</label>
+          <textarea
+            id="responseText"
+            name="responseText"
+            rows="8"
+            placeholder="Write the prompt Gwen would give the AI assistant..."
+            required
+          ></textarea>
+          <label for="feedbackText">Quick reflection from Gwen</label>
+          <textarea
+            id="feedbackText"
+            name="feedbackText"
+            rows="3"
+            placeholder="What felt useful, awkward, or worth improving?"
+            required
+          ></textarea>
+          <button class="primary" type="submit">Complete drill</button>
+        </form>
+      </section>
+
+      <section class="card footer-card">
+        <div>
+          <p class="eyebrow">Momentum</p>
+          <p id="summaryLine">Loading progress…</p>
+        </div>
+        <div id="badgeList" class="badge-list"></div>
+      </section>
+    </main>
+
+    <template id="badgeTemplate">
+      <span class="badge-pill"></span>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
