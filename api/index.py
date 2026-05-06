@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from typing import Any
 from urllib import request
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import psycopg
 from fastapi import FastAPI, HTTPException
@@ -14,7 +15,7 @@ from psycopg.rows import dict_row
 
 APP_TITLE = "Gwen Prompt Gym"
 LEARNER_NAME = "Gwen"
-DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
+RAW_DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
 OPENAI_RECOMMENDER_MODEL = os.getenv("OPENAI_RECOMMENDER_MODEL", "gpt-4.1-mini")
 
 TASKS = [
@@ -137,6 +138,24 @@ def utc_now() -> str:
 
 def today_iso() -> str:
     return date.today().isoformat()
+
+
+def normalize_database_url(raw_url: str | None) -> str | None:
+    if not raw_url:
+        return None
+    parsed = urlsplit(raw_url)
+    scheme = parsed.scheme
+    if scheme == "postgresql+asyncpg":
+        scheme = "postgresql"
+    elif scheme == "postgres+asyncpg":
+        scheme = "postgres"
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if "ssl" in query and "sslmode" not in query:
+        query["sslmode"] = query.pop("ssl")
+    return urlunsplit((scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
+
+
+DATABASE_URL = normalize_database_url(RAW_DATABASE_URL)
 
 
 def require_database_url() -> str:
