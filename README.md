@@ -13,9 +13,9 @@ Required environment variables:
 
 On first request, the backend automatically creates these tables if they do not already exist:
 
-- `learners`
-- `task_attempts`
-- `badges`
+- `gwen_prompt_gym_learners`
+- `gwen_prompt_gym_task_attempts`
+- `gwen_prompt_gym_badges`
 
 ## Local run
 

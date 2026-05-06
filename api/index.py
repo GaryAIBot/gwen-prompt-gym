@@ -15,6 +15,9 @@ from psycopg.rows import dict_row
 
 APP_TITLE = "Gwen Prompt Gym"
 LEARNER_NAME = "Gwen"
+LEARNERS_TABLE = "gwen_prompt_gym_learners"
+ATTEMPTS_TABLE = "gwen_prompt_gym_task_attempts"
+BADGES_TABLE = "gwen_prompt_gym_badges"
 RAW_DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
 OPENAI_RECOMMENDER_MODEL = os.getenv("OPENAI_RECOMMENDER_MODEL", "gpt-4.1-mini")
 
@@ -89,8 +92,8 @@ TASKS = [
 TASK_LOOKUP = {task["id"]: task for task in TASKS}
 SCHEMA_READY = False
 
-SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS learners (
+SCHEMA_SQL = f"""
+CREATE TABLE IF NOT EXISTS {LEARNERS_TABLE} (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL,
@@ -101,9 +104,9 @@ CREATE TABLE IF NOT EXISTS learners (
     feedback_summary TEXT NOT NULL DEFAULT ''
 );
 
-CREATE TABLE IF NOT EXISTS task_attempts (
+CREATE TABLE IF NOT EXISTS {ATTEMPTS_TABLE} (
     id SERIAL PRIMARY KEY,
-    learner_id INTEGER NOT NULL REFERENCES learners(id),
+    learner_id INTEGER NOT NULL REFERENCES {LEARNERS_TABLE}(id),
     task_id TEXT NOT NULL,
     response_text TEXT NOT NULL,
     coach_feedback TEXT NOT NULL,
@@ -112,9 +115,9 @@ CREATE TABLE IF NOT EXISTS task_attempts (
     completed_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS badges (
+CREATE TABLE IF NOT EXISTS {BADGES_TABLE} (
     id SERIAL PRIMARY KEY,
-    learner_id INTEGER NOT NULL REFERENCES learners(id),
+    learner_id INTEGER NOT NULL REFERENCES {LEARNERS_TABLE}(id),
     badge_name TEXT NOT NULL,
     awarded_at TEXT NOT NULL,
     UNIQUE (learner_id, badge_name)
@@ -168,13 +171,12 @@ def ensure_schema() -> None:
     global SCHEMA_READY
     if SCHEMA_READY:
         return
-    database_url = require_database_url()
-    with psycopg.connect(database_url, row_factory=dict_row) as conn:
+    with psycopg.connect(require_database_url(), row_factory=dict_row) as conn:
         with conn.cursor() as cur:
             cur.execute(SCHEMA_SQL)
             cur.execute(
-                """
-                INSERT INTO learners (name, created_at, total_points, skill_level, streak_days, feedback_summary)
+                f"""
+                INSERT INTO {LEARNERS_TABLE} (name, created_at, total_points, skill_level, streak_days, feedback_summary)
                 VALUES (%s, %s, 0, 1, 0, %s)
                 ON CONFLICT (name) DO NOTHING
                 """,
@@ -196,7 +198,7 @@ def row_get(row: Any, key: str) -> Any:
 
 
 def get_learner(conn: Any, learner_name: str = LEARNER_NAME) -> Any:
-    learner = conn.execute("SELECT * FROM learners WHERE name = %s", (learner_name,)).fetchone()
+    learner = conn.execute(f"SELECT * FROM {LEARNERS_TABLE} WHERE name = %s", (learner_name,)).fetchone()
     if not learner:
         raise HTTPException(status_code=404, detail="Learner not found")
     return learner
@@ -204,7 +206,7 @@ def get_learner(conn: Any, learner_name: str = LEARNER_NAME) -> Any:
 
 def get_attempted_task_ids(conn: Any, learner_id: int) -> list[str]:
     rows = conn.execute(
-        "SELECT task_id FROM task_attempts WHERE learner_id = %s ORDER BY completed_at DESC",
+        f"SELECT task_id FROM {ATTEMPTS_TABLE} WHERE learner_id = %s ORDER BY completed_at DESC",
         (learner_id,),
     ).fetchall()
     return [row_get(row, "task_id") for row in rows]
@@ -213,16 +215,16 @@ def get_attempted_task_ids(conn: Any, learner_id: int) -> list[str]:
 def summarize_progress(conn: Any, learner: Any) -> dict[str, Any]:
     learner_id = row_get(learner, "id")
     attempts = conn.execute(
-        """
+        f"""
         SELECT task_id, points_awarded, coach_feedback, gwen_feedback, completed_at
-        FROM task_attempts
+        FROM {ATTEMPTS_TABLE}
         WHERE learner_id = %s
         ORDER BY completed_at DESC
         """,
         (learner_id,),
     ).fetchall()
     badges = conn.execute(
-        "SELECT badge_name FROM badges WHERE learner_id = %s ORDER BY awarded_at",
+        f"SELECT badge_name FROM {BADGES_TABLE} WHERE learner_id = %s ORDER BY awarded_at",
         (learner_id,),
     ).fetchall()
     attempted_ids = [row_get(row, "task_id") for row in attempts]
@@ -444,8 +446,8 @@ def submit_task(payload: SubmitTaskPayload):
         completed_at = utc_now()
 
         conn.execute(
-            """
-            INSERT INTO task_attempts (
+            f"""
+            INSERT INTO {ATTEMPTS_TABLE} (
                 learner_id, task_id, response_text, coach_feedback, gwen_feedback, points_awarded, completed_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
@@ -460,8 +462,8 @@ def submit_task(payload: SubmitTaskPayload):
             ),
         )
         conn.execute(
-            """
-            INSERT INTO badges (learner_id, badge_name, awarded_at)
+            f"""
+            INSERT INTO {BADGES_TABLE} (learner_id, badge_name, awarded_at)
             VALUES (%s, %s, %s)
             ON CONFLICT (learner_id, badge_name) DO NOTHING
             """,
@@ -479,8 +481,8 @@ def submit_task(payload: SubmitTaskPayload):
         )
 
         conn.execute(
-            """
-            UPDATE learners
+            f"""
+            UPDATE {LEARNERS_TABLE}
             SET total_points = %s, skill_level = %s, streak_days = %s, last_completed_on = %s, feedback_summary = %s
             WHERE id = %s
             """,
@@ -513,9 +515,10 @@ def health():
                 SELECT table_name
                 FROM information_schema.tables
                 WHERE table_schema = 'public'
-                  AND table_name IN ('learners', 'task_attempts', 'badges')
+                  AND table_name IN (%s, %s, %s)
                 ORDER BY table_name
-                """
+                """,
+                (LEARNERS_TABLE, ATTEMPTS_TABLE, BADGES_TABLE),
             ).fetchall()
         return {
             "ok": True,
