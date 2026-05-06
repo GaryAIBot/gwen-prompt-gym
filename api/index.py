@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
 
+import psycopg
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from psycopg.rows import dict_row
 
 
 APP_TITLE = "Gwen Prompt Gym"
@@ -20,6 +22,8 @@ BLOB_PATHNAME = "data/gwen-prompt-gym.sqlite3"
 DB_LOCK = threading.RLock()
 BLOB_API_URL = "https://vercel.com/api/blob"
 BLOB_API_VERSION = "12"
+DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
+DB_BACKEND = "postgres" if DATABASE_URL else "sqlite"
 
 
 TASKS = [
@@ -161,6 +165,7 @@ class BlobStore:
 
 blob_store = BlobStore(os.getenv("BLOB_READ_WRITE_TOKEN"))
 app = FastAPI(title=APP_TITLE)
+_db_initialized = False
 
 
 def utc_now() -> str:
@@ -174,7 +179,7 @@ def today_iso() -> str:
 def calculate_streak(last_completed_on: str | None, today: str, current_streak: int) -> int:
     if not last_completed_on:
         return 1
-    last_date = date.fromisoformat(last_completed_on)
+    last_date = date.fromisoformat(str(last_completed_on))
     today_date = date.fromisoformat(today)
     delta_days = (today_date - last_date).days
     if delta_days == 0:
@@ -184,54 +189,92 @@ def calculate_streak(last_completed_on: str | None, today: str, current_streak: 
     return 1
 
 
-def ensure_db_loaded() -> None:
-    with DB_LOCK:
-        if DB_PATH.exists():
-            return
-        snapshot = blob_store.download(BLOB_PATHNAME)
-        if snapshot:
-            DB_PATH.write_bytes(snapshot)
-        initialize_db()
+POSTGRES_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS learners (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    total_points INTEGER NOT NULL DEFAULT 0,
+    skill_level INTEGER NOT NULL DEFAULT 1,
+    streak_days INTEGER NOT NULL DEFAULT 0,
+    last_completed_on TEXT,
+    feedback_summary TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS task_attempts (
+    id SERIAL PRIMARY KEY,
+    learner_id INTEGER NOT NULL REFERENCES learners(id),
+    task_id TEXT NOT NULL,
+    response_text TEXT NOT NULL,
+    coach_feedback TEXT NOT NULL,
+    gwen_feedback TEXT NOT NULL,
+    points_awarded INTEGER NOT NULL,
+    completed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS badges (
+    id SERIAL PRIMARY KEY,
+    learner_id INTEGER NOT NULL REFERENCES learners(id),
+    badge_name TEXT NOT NULL,
+    awarded_at TEXT NOT NULL,
+    UNIQUE (learner_id, badge_name)
+);
+"""
+
+SQLITE_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS learners (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    total_points INTEGER NOT NULL DEFAULT 0,
+    skill_level INTEGER NOT NULL DEFAULT 1,
+    streak_days INTEGER NOT NULL DEFAULT 0,
+    last_completed_on TEXT,
+    feedback_summary TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS task_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    learner_id INTEGER NOT NULL,
+    task_id TEXT NOT NULL,
+    response_text TEXT NOT NULL,
+    coach_feedback TEXT NOT NULL,
+    gwen_feedback TEXT NOT NULL,
+    points_awarded INTEGER NOT NULL,
+    completed_at TEXT NOT NULL,
+    FOREIGN KEY (learner_id) REFERENCES learners(id)
+);
+
+CREATE TABLE IF NOT EXISTS badges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    learner_id INTEGER NOT NULL,
+    badge_name TEXT NOT NULL,
+    awarded_at TEXT NOT NULL,
+    UNIQUE (learner_id, badge_name),
+    FOREIGN KEY (learner_id) REFERENCES learners(id)
+);
+"""
 
 
-def initialize_db() -> None:
+def initialize_postgres_db() -> None:
+    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(POSTGRES_SCHEMA_SQL)
+            cur.execute(
+                """
+                INSERT INTO learners (name, created_at, total_points, skill_level, streak_days, feedback_summary)
+                VALUES (%s, %s, 0, 1, 0, %s)
+                ON CONFLICT (name) DO NOTHING
+                """,
+                (LEARNER_NAME, utc_now(), "Fresh start. Gwen is warming up her strategic prompting muscles."),
+            )
+        conn.commit()
+
+
+def initialize_sqlite_db() -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS learners (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                created_at TEXT NOT NULL,
-                total_points INTEGER NOT NULL DEFAULT 0,
-                skill_level INTEGER NOT NULL DEFAULT 1,
-                streak_days INTEGER NOT NULL DEFAULT 0,
-                last_completed_on TEXT,
-                feedback_summary TEXT NOT NULL DEFAULT ''
-            );
-
-            CREATE TABLE IF NOT EXISTS task_attempts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                learner_id INTEGER NOT NULL,
-                task_id TEXT NOT NULL,
-                response_text TEXT NOT NULL,
-                coach_feedback TEXT NOT NULL,
-                gwen_feedback TEXT NOT NULL,
-                points_awarded INTEGER NOT NULL,
-                completed_at TEXT NOT NULL,
-                FOREIGN KEY (learner_id) REFERENCES learners(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS badges (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                learner_id INTEGER NOT NULL,
-                badge_name TEXT NOT NULL,
-                awarded_at TEXT NOT NULL,
-                UNIQUE (learner_id, badge_name),
-                FOREIGN KEY (learner_id) REFERENCES learners(id)
-            );
-            """
-        )
+        conn.executescript(SQLITE_SCHEMA_SQL)
         conn.execute(
             """
             INSERT OR IGNORE INTO learners (
@@ -241,77 +284,124 @@ def initialize_db() -> None:
             (LEARNER_NAME, utc_now(), "Fresh start. Gwen is warming up her strategic prompting muscles."),
         )
         conn.commit()
-    persist_db()
+    persist_sqlite_db()
+
+
+def ensure_db_loaded() -> None:
+    global _db_initialized
+    with DB_LOCK:
+        if _db_initialized:
+            return
+        if DB_BACKEND == "postgres":
+            initialize_postgres_db()
+            _db_initialized = True
+            return
+        if not DB_PATH.exists():
+            snapshot = blob_store.download(BLOB_PATHNAME)
+            if snapshot:
+                DB_PATH.write_bytes(snapshot)
+        initialize_sqlite_db()
+        _db_initialized = True
 
 
 @contextmanager
 def db_conn():
     ensure_db_loaded()
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        yield conn
+    if DB_BACKEND == "postgres":
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            yield conn
+    else:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            yield conn
 
 
-def persist_db() -> None:
-    if not DB_PATH.exists():
+def persist_sqlite_db() -> None:
+    if DB_BACKEND != "sqlite" or not DB_PATH.exists():
         return
     blob_store.upload(BLOB_PATHNAME, DB_PATH.read_bytes())
 
 
-def get_learner(conn: sqlite3.Connection, learner_name: str = LEARNER_NAME) -> sqlite3.Row:
-    learner = conn.execute(
-        "SELECT * FROM learners WHERE name = ?",
-        (learner_name,),
-    ).fetchone()
+def row_get(row: Any, key: str) -> Any:
+    return row[key]
+
+
+def get_learner(conn: Any, learner_name: str = LEARNER_NAME) -> Any:
+    if DB_BACKEND == "postgres":
+        learner = conn.execute("SELECT * FROM learners WHERE name = %s", (learner_name,)).fetchone()
+    else:
+        learner = conn.execute("SELECT * FROM learners WHERE name = ?", (learner_name,)).fetchone()
     if not learner:
         raise HTTPException(status_code=404, detail="Learner not found")
     return learner
 
 
-def get_attempted_task_ids(conn: sqlite3.Connection, learner_id: int) -> list[str]:
-    rows = conn.execute(
-        "SELECT task_id FROM task_attempts WHERE learner_id = ? ORDER BY completed_at DESC",
-        (learner_id,),
-    ).fetchall()
-    return [row["task_id"] for row in rows]
+def get_attempted_task_ids(conn: Any, learner_id: int) -> list[str]:
+    if DB_BACKEND == "postgres":
+        rows = conn.execute(
+            "SELECT task_id FROM task_attempts WHERE learner_id = %s ORDER BY completed_at DESC",
+            (learner_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT task_id FROM task_attempts WHERE learner_id = ? ORDER BY completed_at DESC",
+            (learner_id,),
+        ).fetchall()
+    return [row_get(row, "task_id") for row in rows]
 
 
-def summarize_progress(conn: sqlite3.Connection, learner: sqlite3.Row) -> dict[str, Any]:
-    attempts = conn.execute(
-        """
-        SELECT task_id, points_awarded, coach_feedback, gwen_feedback, completed_at
-        FROM task_attempts
-        WHERE learner_id = ?
-        ORDER BY completed_at DESC
-        """,
-        (learner["id"],),
-    ).fetchall()
-    badges = conn.execute(
-        "SELECT badge_name FROM badges WHERE learner_id = ? ORDER BY awarded_at",
-        (learner["id"],),
-    ).fetchall()
-    attempted_ids = [row["task_id"] for row in attempts]
+def summarize_progress(conn: Any, learner: Any) -> dict[str, Any]:
+    learner_id = row_get(learner, "id")
+    if DB_BACKEND == "postgres":
+        attempts = conn.execute(
+            """
+            SELECT task_id, points_awarded, coach_feedback, gwen_feedback, completed_at
+            FROM task_attempts
+            WHERE learner_id = %s
+            ORDER BY completed_at DESC
+            """,
+            (learner_id,),
+        ).fetchall()
+        badges = conn.execute(
+            "SELECT badge_name FROM badges WHERE learner_id = %s ORDER BY awarded_at",
+            (learner_id,),
+        ).fetchall()
+    else:
+        attempts = conn.execute(
+            """
+            SELECT task_id, points_awarded, coach_feedback, gwen_feedback, completed_at
+            FROM task_attempts
+            WHERE learner_id = ?
+            ORDER BY completed_at DESC
+            """,
+            (learner_id,),
+        ).fetchall()
+        badges = conn.execute(
+            "SELECT badge_name FROM badges WHERE learner_id = ? ORDER BY awarded_at",
+            (learner_id,),
+        ).fetchall()
+    attempted_ids = [row_get(row, "task_id") for row in attempts]
     completion_ratio = round(len(attempted_ids) / len(TASKS), 2)
     return {
-        "learner": learner["name"],
-        "total_points": learner["total_points"],
-        "skill_level": learner["skill_level"],
-        "streak_days": learner["streak_days"],
-        "last_completed_on": learner["last_completed_on"],
-        "feedback_summary": learner["feedback_summary"],
+        "learner": row_get(learner, "name"),
+        "total_points": row_get(learner, "total_points"),
+        "skill_level": row_get(learner, "skill_level"),
+        "streak_days": row_get(learner, "streak_days"),
+        "last_completed_on": row_get(learner, "last_completed_on"),
+        "feedback_summary": row_get(learner, "feedback_summary"),
         "completed_tasks": attempted_ids,
         "attempt_count": len(attempted_ids),
-        "badges": [row["badge_name"] for row in badges],
+        "badges": [row_get(row, "badge_name") for row in badges],
         "completion_ratio": completion_ratio,
         "recent_attempts": [dict(row) for row in attempts[:4]],
     }
 
 
-def heuristic_next_task(learner: sqlite3.Row, attempted_ids: list[str], feedback_summary: str) -> dict[str, Any]:
+def heuristic_next_task(learner: Any, attempted_ids: list[str], feedback_summary: str) -> dict[str, Any]:
     remaining = [task for task in TASKS if task["id"] not in attempted_ids]
     if not remaining:
         remaining = TASKS
-    target_level = max(1, min(3, learner["skill_level"]))
+    target_level = max(1, min(3, row_get(learner, "skill_level")))
     feedback_text = feedback_summary.lower()
     focus_weights = {
         "clarity": 0,
@@ -338,14 +428,14 @@ def heuristic_next_task(learner: sqlite3.Row, attempted_ids: list[str], feedback
     return ranked[0]
 
 
-def recommend_next_task_with_llm(learner: sqlite3.Row, progress: dict[str, Any]) -> tuple[dict[str, Any], str]:
+def recommend_next_task_with_llm(learner: Any, progress: dict[str, Any]) -> tuple[dict[str, Any], str]:
     remaining = [task for task in TASKS if task["id"] not in progress["completed_tasks"]]
     if not remaining:
         remaining = TASKS
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        fallback = heuristic_next_task(learner, progress["completed_tasks"], learner["feedback_summary"])
+        fallback = heuristic_next_task(learner, progress["completed_tasks"], row_get(learner, "feedback_summary"))
         return fallback, "Heuristic pick because OPENAI_API_KEY is missing."
 
     payload = {
@@ -371,11 +461,11 @@ def recommend_next_task_with_llm(learner: sqlite3.Row, progress: dict[str, Any])
                         "text": json.dumps(
                             {
                                 "learner": {
-                                    "name": learner["name"],
-                                    "skill_level": learner["skill_level"],
-                                    "total_points": learner["total_points"],
-                                    "streak_days": learner["streak_days"],
-                                    "feedback_summary": learner["feedback_summary"],
+                                    "name": row_get(learner, "name"),
+                                    "skill_level": row_get(learner, "skill_level"),
+                                    "total_points": row_get(learner, "total_points"),
+                                    "streak_days": row_get(learner, "streak_days"),
+                                    "feedback_summary": row_get(learner, "feedback_summary"),
                                 },
                                 "recent_attempts": progress["recent_attempts"],
                                 "remaining_tasks": remaining,
@@ -391,10 +481,7 @@ def recommend_next_task_with_llm(learner: sqlite3.Row, progress: dict[str, Any])
                 "name": "task_recommendation",
                 "schema": {
                     "type": "object",
-                    "properties": {
-                        "task_id": {"type": "string"},
-                        "reason": {"type": "string"},
-                    },
+                    "properties": {"task_id": {"type": "string"}, "reason": {"type": "string"}},
                     "required": ["task_id", "reason"],
                     "additionalProperties": False,
                 },
@@ -404,10 +491,7 @@ def recommend_next_task_with_llm(learner: sqlite3.Row, progress: dict[str, Any])
     req = request.Request(
         "https://api.openai.com/v1/responses",
         data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         method="POST",
     )
     try:
@@ -421,7 +505,7 @@ def recommend_next_task_with_llm(learner: sqlite3.Row, progress: dict[str, Any])
     except Exception:
         pass
 
-    fallback = heuristic_next_task(learner, progress["completed_tasks"], learner["feedback_summary"])
+    fallback = heuristic_next_task(learner, progress["completed_tasks"], row_get(learner, "feedback_summary"))
     return fallback, "Heuristic pick because the model recommendation was unavailable."
 
 
@@ -451,12 +535,9 @@ def profile_state():
         next_task, reason = recommend_next_task_with_llm(learner, progress)
         return {
             "app_title": APP_TITLE,
-            "storage_mode": "vercel-blob-snapshotted-sqlite" if blob_store.enabled else "local-sqlite",
+            "storage_mode": "neon-postgres" if DB_BACKEND == "postgres" else ("vercel-blob-snapshotted-sqlite" if blob_store.enabled else "local-sqlite"),
             "profile": progress,
-            "levels": {
-                "current": learner["skill_level"],
-                "next_level_points": learner["skill_level"] * 240,
-            },
+            "levels": {"current": row_get(learner, "skill_level"), "next_level_points": row_get(learner, "skill_level") * 240},
             "next_task": {**next_task, "recommendation_reason": reason},
         }
 
@@ -492,52 +573,90 @@ def submit_task(payload: SubmitTaskPayload):
     with DB_LOCK:
         with db_conn() as conn:
             learner = get_learner(conn, payload.learner_name)
+            learner_id = row_get(learner, "id")
             points, coach_feedback = award_points(task, payload.response_text, payload.gwen_feedback)
             completed_at = utc_now()
-            conn.execute(
-                """
-                INSERT INTO task_attempts (
-                    learner_id, task_id, response_text, coach_feedback, gwen_feedback, points_awarded, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    learner["id"],
-                    task["id"],
-                    payload.response_text.strip(),
-                    coach_feedback,
-                    payload.gwen_feedback.strip(),
-                    points,
-                    completed_at,
-                ),
-            )
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO badges (learner_id, badge_name, awarded_at)
-                VALUES (?, ?, ?)
-                """,
-                (learner["id"], task["badge"], completed_at),
-            )
+
+            if DB_BACKEND == "postgres":
+                conn.execute(
+                    """
+                    INSERT INTO task_attempts (
+                        learner_id, task_id, response_text, coach_feedback, gwen_feedback, points_awarded, completed_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        learner_id,
+                        task["id"],
+                        payload.response_text.strip(),
+                        coach_feedback,
+                        payload.gwen_feedback.strip(),
+                        points,
+                        completed_at,
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO badges (learner_id, badge_name, awarded_at)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (learner_id, badge_name) DO NOTHING
+                    """,
+                    (learner_id, task["badge"], completed_at),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO task_attempts (
+                        learner_id, task_id, response_text, coach_feedback, gwen_feedback, points_awarded, completed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        learner_id,
+                        task["id"],
+                        payload.response_text.strip(),
+                        coach_feedback,
+                        payload.gwen_feedback.strip(),
+                        points,
+                        completed_at,
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO badges (learner_id, badge_name, awarded_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (learner_id, task["badge"], completed_at),
+                )
 
             today = today_iso()
-            streak_days = calculate_streak(learner["last_completed_on"], today, learner["streak_days"])
-            total_points = learner["total_points"] + points
+            streak_days = calculate_streak(row_get(learner, "last_completed_on"), today, row_get(learner, "streak_days"))
+            total_points = row_get(learner, "total_points") + points
             skill_level = max(1, min(3, 1 + total_points // 240))
-            completion_count = len(get_attempted_task_ids(conn, learner["id"]))
+            completion_count = len(get_attempted_task_ids(conn, learner_id))
             feedback_summary = (
                 f"Latest reflection: {payload.gwen_feedback.strip()} | "
                 f"Recent strength: {task['focus']} | Total completions: {completion_count}"
             )
 
-            conn.execute(
-                """
-                UPDATE learners
-                SET total_points = ?, skill_level = ?, streak_days = ?, last_completed_on = ?, feedback_summary = ?
-                WHERE id = ?
-                """,
-                (total_points, skill_level, streak_days, today, feedback_summary, learner["id"]),
-            )
+            if DB_BACKEND == "postgres":
+                conn.execute(
+                    """
+                    UPDATE learners
+                    SET total_points = %s, skill_level = %s, streak_days = %s, last_completed_on = %s, feedback_summary = %s
+                    WHERE id = %s
+                    """,
+                    (total_points, skill_level, streak_days, today, feedback_summary, learner_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE learners
+                    SET total_points = ?, skill_level = ?, streak_days = ?, last_completed_on = ?, feedback_summary = ?
+                    WHERE id = ?
+                    """,
+                    (total_points, skill_level, streak_days, today, feedback_summary, learner_id),
+                )
             conn.commit()
-            persist_db()
+            persist_sqlite_db()
 
         with db_conn() as read_conn:
             learner = get_learner(read_conn, payload.learner_name)
@@ -560,6 +679,8 @@ def health():
     return {
         "ok": True,
         "app": APP_TITLE,
-        "db_exists": DB_PATH.exists(),
+        "db_backend": DB_BACKEND,
+        "db_exists": True if DB_BACKEND == "postgres" else DB_PATH.exists(),
         "blob_enabled": blob_store.enabled,
+        "database_url_present": bool(DATABASE_URL),
     }
