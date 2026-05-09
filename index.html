@@ -246,6 +246,7 @@
           </div>
           <div class="actions" style="margin-top:16px;">
             <button class="secondary" type="button" id="refreshTask">Load a fresh gym scenario</button>
+            <button class="secondary hidden" type="button" id="nextQuest">Next quest</button>
           </div>
         </section>
 
@@ -356,16 +357,14 @@
         <details id="coachSection">
           <summary>4. Coaching</summary>
           <div class="details-body">
-            <div class="quest-box" style="margin-bottom:12px;">
-              <strong>Why this quest?</strong>
-              <p class="muted" id="taskRationale" style="margin-top:8px;"></p>
-              <p class="muted tiny" style="margin-top:8px;">Engine: <span id="taskSource">heuristic</span></p>
-            </div>
             <div class="coach-box"><strong>Verdict</strong><p class="muted" id="coachVerdict" style="margin-top:8px;">Complete a rep and the coach will assess the result and your reflection.</p></div>
             <div class="coach-box" style="margin-top:12px;"><strong>What’s strongest</strong><p class="muted" id="coachStrongest" style="margin-top:8px;">The strongest element will appear here.</p></div>
             <div class="coach-box" style="margin-top:12px;"><strong>What’s missing</strong><p class="muted" id="coachMissing" style="margin-top:8px;">The key gaps will appear here.</p></div>
             <div class="coach-box" style="margin-top:12px;"><strong>Why that matters</strong><p class="muted" id="coachWhy" style="margin-top:8px;">The consequence for output or decision quality will appear here.</p></div>
             <div class="coach-box" style="margin-top:12px;"><strong>Best rewrite</strong><p class="muted" id="revisedPrompt" style="margin-top:8px;">Your improved prompt draft will appear here.</p></div>
+            <div class="actions" style="margin-top:12px;">
+              <button class="secondary" type="button" id="recoachButton">Try another coach mode</button>
+            </div>
           </div>
         </details>
 
@@ -448,8 +447,6 @@
         document.getElementById('taskBrief').textContent = task.promptBrief;
         document.getElementById('learnerGoal').textContent = task.learnerGoal;
         document.getElementById('reflectionHint').textContent = task.reflectionHint;
-        document.getElementById('taskRationale').textContent = rationale;
-        document.getElementById('taskSource').textContent = source;
         document.getElementById('taskChips').innerHTML = [
           `<span class="chip">${task.skillFocus}</span>`,
           `<span class="chip">${task.xpReward} XP base</span>`,
@@ -515,6 +512,22 @@
         }
       }
 
+      function currentPayload() {
+        const payload = {
+          task_id: currentTask.id,
+          prompt_text: document.getElementById('promptText').value.trim(),
+          reflection_text: document.getElementById('reflectionText').value.trim(),
+          outcome_fit: Number(document.getElementById('relevanceRating').value),
+          clarity_rating: Number(document.getElementById('clarityRating').value),
+          structure_rating: Number(document.getElementById('structureRating').value),
+          strategic_rating: Number(document.getElementById('strategicRating').value),
+          confidence_after: Number(document.getElementById('actionabilityRating').value),
+          feedback_mode: document.getElementById('feedbackMode').value,
+        };
+        payload.improvement_focus = weakestFocus(payload);
+        return payload;
+      }
+
       document.getElementById('scenarioMode').addEventListener('click', () => setMode('scenario'));
       document.getElementById('workMode').addEventListener('click', () => setMode('work'));
 
@@ -546,18 +559,7 @@
         event.preventDefault();
         if (!currentTask) return;
 
-        const payload = {
-          task_id: currentTask.id,
-          prompt_text: document.getElementById('promptText').value.trim(),
-          reflection_text: document.getElementById('reflectionText').value.trim(),
-          outcome_fit: Number(document.getElementById('relevanceRating').value),
-          clarity_rating: Number(document.getElementById('clarityRating').value),
-          structure_rating: Number(document.getElementById('structureRating').value),
-          strategic_rating: Number(document.getElementById('strategicRating').value),
-          confidence_after: Number(document.getElementById('actionabilityRating').value),
-          feedback_mode: document.getElementById('feedbackMode').value,
-        };
-        payload.improvement_focus = weakestFocus(payload);
+        const payload = currentPayload();
 
         if (payload.prompt_text.length < 20 || payload.reflection_text.length < 20) {
           showToast('Give the app a real prompt and a real reflection so the coaching has something to work with.', 'error');
@@ -576,14 +578,59 @@
           document.getElementById('coachMissing').textContent = data.coaching.missing;
           document.getElementById('coachWhy').textContent = data.coaching.whyMatters;
           document.getElementById('revisedPrompt').textContent = data.coaching.revisedPrompt;
-          document.getElementById('promptText').value = '';
-          document.getElementById('reflectionText').value = '';
-          document.getElementById('workPrompt').value = '';
           document.getElementById('coachSection').open = true;
-          showToast(data.celebration);
-          await load('Loading your next quest...');
+          document.getElementById('nextQuest').classList.remove('hidden');
+          showToast(data.message || data.celebration);
         } catch (error) {
           showToast(`Could not clear the quest: ${error.message}`, 'error');
+        } finally {
+          setBusy('', false);
+        }
+      });
+
+      document.getElementById('recoachButton').addEventListener('click', async () => {
+        if (!currentTask) return;
+        const payload = currentPayload();
+        if (payload.prompt_text.length < 20 || payload.reflection_text.length < 20) {
+          showToast('Keep the prompt and reflection filled in so another coach mode has something to work with.', 'error');
+          return;
+        }
+        try {
+          setBusy('Generating coaching in the selected mode...', true);
+          const data = await fetchJson('/api/task/recoach', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          document.getElementById('coachVerdict').textContent = data.coaching.verdict;
+          document.getElementById('coachStrongest').textContent = data.coaching.strongest;
+          document.getElementById('coachMissing').textContent = data.coaching.missing;
+          document.getElementById('coachWhy').textContent = data.coaching.whyMatters;
+          document.getElementById('revisedPrompt').textContent = data.coaching.revisedPrompt;
+          document.getElementById('coachSection').open = true;
+          showToast('Coaching refreshed with the selected mode.');
+        } catch (error) {
+          showToast(`Could not refresh coaching: ${error.message}`, 'error');
+        } finally {
+          setBusy('', false);
+        }
+      });
+
+      document.getElementById('nextQuest').addEventListener('click', async () => {
+        try {
+          setBusy('Loading your next quest...', true);
+          const data = await fetchJson('/api/task/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          setMode('scenario');
+          renderTask(data.today.task, data.today.rationale, data.today.source);
+          document.getElementById('nextQuest').classList.add('hidden');
+          document.getElementById('coachSection').open = false;
+          showToast('Next quest loaded.');
+        } catch (error) {
+          showToast(`Could not load the next quest: ${error.message}`, 'error');
         } finally {
           setBusy('', false);
         }
@@ -599,6 +646,7 @@
           });
           setMode('scenario');
           renderTask(data.today.task, data.today.rationale, data.today.source);
+          document.getElementById('nextQuest').classList.add('hidden');
           showToast('Fresh gym scenario loaded.');
         } catch (error) {
           showToast(`Could not load a new scenario: ${error.message}`, 'error');

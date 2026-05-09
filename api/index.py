@@ -259,6 +259,19 @@ class CreatePromptQuestIn(BaseModel):
     prompt_text: str = Field(min_length=20, max_length=5000)
 
 
+class RecoachIn(BaseModel):
+    task_id: int
+    prompt_text: str = Field(min_length=20, max_length=5000)
+    reflection_text: str = Field(min_length=20, max_length=2500)
+    outcome_fit: int = Field(ge=1, le=5)
+    clarity_rating: int = Field(ge=1, le=5)
+    structure_rating: int = Field(ge=1, le=5)
+    strategic_rating: int = Field(ge=1, le=5)
+    confidence_after: int = Field(ge=1, le=5)
+    improvement_focus: str = Field(min_length=3, max_length=80)
+    feedback_mode: str = Field(default="quick_coach", pattern="^(quick_coach|sharp_reviewer|strategic_mentor)$")
+
+
 @dataclass
 class RecommendationResult:
     task: ScenarioTask
@@ -1017,6 +1030,26 @@ def create_task_from_prompt(payload: CreatePromptQuestIn) -> dict[str, Any]:
         }
 
 
+@app.post("/api/task/recoach")
+def recoach_task(payload: RecoachIn) -> dict[str, Any]:
+    with SessionLocal() as session:
+        task = session.get(ScenarioTask, payload.task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        coaching = llm_coaching(task, payload) or heuristic_coaching(task, payload)
+        return {
+            "coaching": {
+                "verdict": coaching.verdict,
+                "strongest": coaching.strongest,
+                "missing": coaching.missing,
+                "whyMatters": coaching.why_matters,
+                "revisedPrompt": coaching.revised_prompt,
+                "source": coaching.source,
+                "mode": coaching.mode,
+            }
+        }
+
+
 @app.post("/api/task/complete")
 def complete_task(payload: CompleteAttemptIn) -> dict[str, Any]:
     with SessionLocal() as session:
@@ -1092,6 +1125,7 @@ def complete_task(payload: CompleteAttemptIn) -> dict[str, Any]:
                 "source": recommendation.source,
             },
             "celebration": celebration_message(task.title, xp_awarded, new_level, new_level > previous_level, badge_label, bonuses),
+            "message": "Rep logged. You can now try another coach mode or move on to the next quest.",
         }
 
 
