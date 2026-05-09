@@ -242,8 +242,8 @@ BADGES = [
 
 class CompleteAttemptIn(BaseModel):
     task_id: int
-    prompt_text: str = Field(min_length=20, max_length=5000)
-    reflection_text: str = Field(min_length=20, max_length=2500)
+    prompt_text: str = Field(min_length=8, max_length=5000)
+    reflection_text: str = Field(min_length=8, max_length=2500)
     outcome_fit: int = Field(ge=1, le=5)
     clarity_rating: int = Field(ge=1, le=5)
     structure_rating: int = Field(ge=1, le=5)
@@ -258,13 +258,13 @@ class RefreshTaskIn(BaseModel):
 
 
 class CreatePromptQuestIn(BaseModel):
-    prompt_text: str = Field(min_length=20, max_length=5000)
+    prompt_text: str = Field(min_length=8, max_length=5000)
 
 
 class RecoachIn(BaseModel):
     task_id: int
-    prompt_text: str = Field(min_length=20, max_length=5000)
-    reflection_text: str = Field(min_length=20, max_length=2500)
+    prompt_text: str = Field(min_length=8, max_length=5000)
+    reflection_text: str = Field(min_length=8, max_length=2500)
     outcome_fit: int = Field(ge=1, le=5)
     clarity_rating: int = Field(ge=1, le=5)
     structure_rating: int = Field(ge=1, le=5)

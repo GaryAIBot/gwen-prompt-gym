@@ -530,9 +530,11 @@
       }
 
       function currentPayload() {
+        const promptText = document.getElementById('promptText').value.trim();
+        const workPromptText = document.getElementById('workPrompt').value.trim();
         const payload = {
           task_id: currentTask.id,
-          prompt_text: document.getElementById('promptText').value.trim(),
+          prompt_text: promptText || workPromptText,
           reflection_text: document.getElementById('reflectionText').value.trim(),
           outcome_fit: Number(document.getElementById('relevanceRating').value),
           clarity_rating: Number(document.getElementById('clarityRating').value),
@@ -578,8 +580,13 @@
 
         const payload = currentPayload();
 
-        if (payload.prompt_text.length < 20 || payload.reflection_text.length < 20) {
-          showToast('Give the app a real prompt and a real reflection so the coaching has something to work with.', 'error');
+        if (payload.prompt_text.length < 8) {
+          showToast('Please add the prompt you used so the coach has something concrete to assess.', 'error');
+          return;
+        }
+
+        if (payload.reflection_text.length < 8) {
+          showToast('Please add a short reflection on the answer so the coach can respond properly.', 'error');
           return;
         }
 
@@ -612,8 +619,12 @@
       document.getElementById('recoachButton').addEventListener('click', async () => {
         if (!currentTask) return;
         const payload = currentPayload();
-        if (payload.prompt_text.length < 20 || payload.reflection_text.length < 20) {
-          showToast('Keep the prompt and reflection filled in so another coach mode has something to work with.', 'error');
+        if (payload.prompt_text.length < 8) {
+          showToast('Keep the prompt filled in so another coach mode has something to work with.', 'error');
+          return;
+        }
+        if (payload.reflection_text.length < 8) {
+          showToast('Keep a short reflection filled in so another coach mode has something to work with.', 'error');
           return;
         }
         try {
