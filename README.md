@@ -19,6 +19,9 @@ Tiny app for deliberate prompt practice in strategy, leadership, and management 
   - **Quick coach**
   - **Sharp reviewer**
   - **Strategic mentor**
+- the app now shows both:
+  - an **output score** from the learner reflection ratings
+  - a **prompt score** blended from learner reflection signals plus LLM prompt assessment
 - adaptive next-task selection based on history and current level
 - explicit loading states so the app signals when it is generating or loading a quest
 

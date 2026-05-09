@@ -11,7 +11,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, desc, func, select
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, desc, func, inspect, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 APP_NAME = "Gwen Prompt Gym"
@@ -67,6 +67,8 @@ class PromptAttempt(Base):
     confidence_after: Mapped[int] = mapped_column(Integer, default=3)
     improvement_focus: Mapped[str] = mapped_column(String(80), default="clarity")
     xp_awarded: Mapped[int] = mapped_column(Integer, default=0)
+    output_score: Mapped[int] = mapped_column(Integer, default=0)
+    prompt_score: Mapped[int] = mapped_column(Integer, default=0)
     coach_summary: Mapped[str] = mapped_column(Text)
     coach_tweaks: Mapped[str] = mapped_column(Text)
     revised_prompt: Mapped[str] = mapped_column(Text)
@@ -286,6 +288,8 @@ class CoachingResult:
     missing: str
     why_matters: str
     revised_prompt: str
+    prompt_score: int
+    output_score: int
     source: str
     mode: str
 
@@ -342,7 +346,23 @@ def rank_title(level: int) -> str:
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
+    ensure_prompt_attempt_columns()
     seed_data()
+
+
+def ensure_prompt_attempt_columns() -> None:
+    inspector = inspect(engine)
+    columns = {col["name"] for col in inspector.get_columns("prompt_attempts")}
+    statements = []
+    if "output_score" not in columns:
+        statements.append("ALTER TABLE prompt_attempts ADD COLUMN output_score INTEGER DEFAULT 0")
+    if "prompt_score" not in columns:
+        statements.append("ALTER TABLE prompt_attempts ADD COLUMN prompt_score INTEGER DEFAULT 0")
+    if not statements:
+        return
+    with engine.begin() as conn:
+        for stmt in statements:
+            conn.exec_driver_sql(stmt)
 
 
 def seed_data() -> None:
@@ -387,6 +407,8 @@ def serialize_attempt(attempt: PromptAttempt, task: ScenarioTask) -> dict[str, A
         "confidenceAfter": attempt.confidence_after,
         "improvementFocus": attempt.improvement_focus,
         "xpAwarded": attempt.xp_awarded,
+        "outputScore": attempt.output_score,
+        "promptScore": attempt.prompt_score,
         "coachSummary": attempt.coach_summary,
         "coachTweaks": attempt.coach_tweaks,
         "revisedPrompt": attempt.revised_prompt,
@@ -415,6 +437,8 @@ def summarize_history(session: Session, limit: int = 8) -> list[dict[str, Any]]:
                 "structure_rating": attempt.structure_rating,
                 "strategic_rating": attempt.strategic_rating,
                 "confidence_after": attempt.confidence_after,
+                "output_score": attempt.output_score,
+                "prompt_score": attempt.prompt_score,
                 "improvement_focus": attempt.improvement_focus,
                 "reflection_text": attempt.reflection_text,
                 "is_custom": task.slug.startswith("work-") or task.slug.startswith("live-") or task.slug.startswith("custom-"),
@@ -454,6 +478,72 @@ def extract_output_text(data: dict[str, Any]) -> str | None:
             if content.get("type") == "output_text" and isinstance(content.get("text"), str):
                 return content["text"]
     return data.get("output_text")
+
+
+def calculate_output_score(payload: CompleteAttemptIn | RecoachIn) -> int:
+    ratings = [
+        payload.clarity_rating,
+        payload.structure_rating,
+        payload.outcome_fit,
+        payload.strategic_rating,
+        payload.confidence_after,
+    ]
+    return round((sum(ratings) / len(ratings)) * 20)
+
+
+def reflection_prompt_proxy_score(payload: CompleteAttemptIn | RecoachIn) -> int:
+    weighted = (
+        payload.outcome_fit * 1.1
+        + payload.clarity_rating * 1.0
+        + payload.structure_rating * 1.0
+        + payload.strategic_rating * 1.2
+        + payload.confidence_after * 1.1
+    ) / 5.4
+    return round(weighted * 20)
+
+
+def output_score_from_attempt(attempt: PromptAttempt) -> int:
+    if attempt.output_score:
+        return attempt.output_score
+    ratings = [attempt.clarity_rating, attempt.structure_rating, attempt.outcome_fit, attempt.strategic_rating, attempt.confidence_after]
+    return round((sum(ratings) / len(ratings)) * 20)
+
+
+def prompt_score_from_attempt(attempt: PromptAttempt) -> int:
+    if attempt.prompt_score:
+        return attempt.prompt_score
+    proxy = (
+        attempt.outcome_fit * 1.1
+        + attempt.clarity_rating * 1.0
+        + attempt.structure_rating * 1.0
+        + attempt.strategic_rating * 1.2
+        + attempt.confidence_after * 1.1
+    ) / 5.4
+    return round(proxy * 20)
+
+
+def progress_stats(session: Session) -> dict[str, Any]:
+    attempts = session.execute(select(PromptAttempt).order_by(desc(PromptAttempt.created_at))).scalars().all()
+    if not attempts:
+        return {
+            "tasksCompleted": 0,
+            "averageOutputScore": 0,
+            "averagePromptScore": 0,
+            "averageClarity": 0,
+            "averageStrategicDepth": 0,
+        }
+    completed = len(attempts)
+    avg_output = round(sum(output_score_from_attempt(a) for a in attempts) / completed, 1)
+    avg_prompt = round(sum(prompt_score_from_attempt(a) for a in attempts) / completed, 1)
+    avg_clarity = round(sum(a.clarity_rating for a in attempts) / completed, 2)
+    avg_strategic = round(sum(a.strategic_rating for a in attempts) / completed, 2)
+    return {
+        "tasksCompleted": completed,
+        "averageOutputScore": avg_output,
+        "averagePromptScore": avg_prompt,
+        "averageClarity": avg_clarity,
+        "averageStrategicDepth": avg_strategic,
+    }
 
 
 def heuristic_recommendation(session: Session, profile: LearnerProfile) -> RecommendationResult:
@@ -668,6 +758,8 @@ def create_prompt_quest(session: Session, profile: LearnerProfile, prompt_text: 
 
 def heuristic_coaching(task: ScenarioTask, payload: CompleteAttemptIn) -> CoachingResult:
     mode = payload.feedback_mode
+    output_score = calculate_output_score(payload)
+    prompt_score = reflection_prompt_proxy_score(payload)
     strengths = []
     gaps = []
     if payload.clarity_rating >= 4:
@@ -721,6 +813,8 @@ def heuristic_coaching(task: ScenarioTask, payload: CompleteAttemptIn) -> Coachi
         missing=missing_map[mode],
         why_matters=why_map[mode],
         revised_prompt=revised_prompt,
+        prompt_score=prompt_score,
+        output_score=output_score,
         source="heuristic",
         mode=mode,
     )
@@ -735,8 +829,9 @@ def llm_coaching(task: ScenarioTask, payload: CompleteAttemptIn) -> CoachingResu
             "missing": {"type": "string"},
             "why_matters": {"type": "string"},
             "revised_prompt": {"type": "string"},
+            "prompt_score": {"type": "integer"},
         },
-        "required": ["verdict", "strongest", "missing", "why_matters", "revised_prompt"],
+        "required": ["verdict", "strongest", "missing", "why_matters", "revised_prompt", "prompt_score"],
         "additionalProperties": False,
     }
     prompt_payload = {
@@ -779,7 +874,8 @@ def llm_coaching(task: ScenarioTask, payload: CompleteAttemptIn) -> CoachingResu
                                     "strongest_style": "name one thing working",
                                     "missing_style": "name one or two sharp gaps",
                                     "why_matters_style": "explain the consequence for output quality or decision quality",
-                                    "revised_prompt_style": "improved full prompt the learner can paste into ChatGPT or Copilot"
+                                    "revised_prompt_style": "improved full prompt the learner can paste into ChatGPT or Copilot",
+                                    "prompt_score_style": "integer 0-100 assessing prompt quality from the available evidence"
                                 },
                             }
                         ),
@@ -800,6 +896,8 @@ def llm_coaching(task: ScenarioTask, payload: CompleteAttemptIn) -> CoachingResu
             missing=parsed["missing"].strip(),
             why_matters=parsed["why_matters"].strip(),
             revised_prompt=parsed["revised_prompt"].strip(),
+            prompt_score=round((reflection_prompt_proxy_score(payload) * 0.45) + (max(0, min(100, int(parsed["prompt_score"]))) * 0.55)),
+            output_score=calculate_output_score(payload),
             source="llm",
             mode=payload.feedback_mode,
         )
@@ -964,9 +1062,7 @@ def bootstrap() -> dict[str, Any]:
             .limit(6)
         ).all()
         progress = progress_in_level(profile.xp)
-        avg_outcome = session.scalar(select(func.avg(PromptAttempt.outcome_fit))) or 0
-        avg_clarity = session.scalar(select(func.avg(PromptAttempt.clarity_rating))) or 0
-        completed = session.scalar(select(func.count(PromptAttempt.id))) or 0
+        stats = progress_stats(session)
         custom_count = session.scalar(select(func.count(PromptAttempt.id)).join(ScenarioTask, PromptAttempt.task_id == ScenarioTask.id).where(ScenarioTask.slug.like("work-%"))) or 0
         badges = list_badges(session)
         return {
@@ -988,11 +1084,9 @@ def bootstrap() -> dict[str, Any]:
             "badges": badges,
             "nextBadge": next_badge_hint(session, profile),
             "stats": {
-                "tasksCompleted": completed,
-                "averageOutcomeFit": round(avg_outcome, 2),
-                "averageClarity": round(avg_clarity, 2),
+                **stats,
                 "customPromptReps": custom_count,
-                "comboMeter": min(100, (completed * 18) + (profile.streak * 6)),
+                "comboMeter": min(100, (stats["tasksCompleted"] * 18) + (profile.streak * 6)),
             },
         }
 
@@ -1044,6 +1138,8 @@ def recoach_task(payload: RecoachIn) -> dict[str, Any]:
                 "missing": coaching.missing,
                 "whyMatters": coaching.why_matters,
                 "revisedPrompt": coaching.revised_prompt,
+                "promptScore": coaching.prompt_score,
+                "outputScore": coaching.output_score,
                 "source": coaching.source,
                 "mode": coaching.mode,
             }
@@ -1071,6 +1167,8 @@ def complete_task(payload: CompleteAttemptIn) -> dict[str, Any]:
             confidence_after=payload.confidence_after,
             improvement_focus=payload.improvement_focus.strip().lower(),
             xp_awarded=xp_awarded,
+            output_score=coaching.output_score,
+            prompt_score=coaching.prompt_score,
             coach_summary=coaching.verdict,
             coach_tweaks="\n\n".join([coaching.strongest, coaching.missing, coaching.why_matters]),
             revised_prompt=coaching.revised_prompt,
@@ -1114,6 +1212,8 @@ def complete_task(payload: CompleteAttemptIn) -> dict[str, Any]:
                 "missing": coaching.missing,
                 "whyMatters": coaching.why_matters,
                 "revisedPrompt": coaching.revised_prompt,
+                "promptScore": coaching.prompt_score,
+                "outputScore": coaching.output_score,
                 "source": coaching.source,
                 "mode": coaching.mode,
             },

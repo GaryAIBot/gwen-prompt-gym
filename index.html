@@ -348,15 +348,20 @@
               </select>
             </label>
             <div class="actions">
-              <button class="primary" type="submit">Clear quest + get coaching</button>
+              <button class="primary" type="submit">Get Coaching</button>
             </div>
           </form>
           <div class="toast" id="toast"></div>
         </section>
 
         <details id="coachSection">
-          <summary>4. Coaching</summary>
+          <summary id="coachSummaryTitle">4. Coaching</summary>
           <div class="details-body">
+            <div class="chips" style="margin-bottom:12px;">
+              <span class="chip" id="coachModeChip">Quick coach</span>
+              <span class="chip" id="coachPromptScore">Prompt score —</span>
+              <span class="chip" id="coachOutputScore">Output score —</span>
+            </div>
             <div class="coach-box"><strong>Verdict</strong><p class="muted" id="coachVerdict" style="margin-top:8px;">Complete a rep and the coach will assess the result and your reflection.</p></div>
             <div class="coach-box" style="margin-top:12px;"><strong>What’s strongest</strong><p class="muted" id="coachStrongest" style="margin-top:8px;">The strongest element will appear here.</p></div>
             <div class="coach-box" style="margin-top:12px;"><strong>What’s missing</strong><p class="muted" id="coachMissing" style="margin-top:8px;">The key gaps will appear here.</p></div>
@@ -374,8 +379,10 @@
             <div class="mini-grid">
               <div class="mini"><strong id="completedCount">0</strong><p class="muted tiny">quests cleared</p></div>
               <div class="mini"><strong id="customPromptReps">0</strong><p class="muted tiny">real-work reps</p></div>
-              <div class="mini"><strong id="avgOutcome">0</strong><p class="muted tiny">avg outcome fit</p></div>
-              <div class="mini"><strong id="avgClarity">0</strong><p class="muted tiny">avg clarity score</p></div>
+              <div class="mini"><strong id="avgOutputScore">0</strong><p class="muted tiny">avg output score</p></div>
+              <div class="mini"><strong id="avgPromptScore">0</strong><p class="muted tiny">avg prompt score</p></div>
+              <div class="mini"><strong id="avgClarity">0</strong><p class="muted tiny">avg clarity</p></div>
+              <div class="mini"><strong id="avgStrategicDepth">0</strong><p class="muted tiny">avg strategic depth</p></div>
             </div>
             <div class="quest-box" style="margin-top:12px;">
               <strong>Next badge target</strong>
@@ -426,6 +433,14 @@
         el.textContent = message;
       }
 
+      function modeLabel(mode) {
+        return {
+          quick_coach: 'Quick coach',
+          sharp_reviewer: 'Sharp reviewer',
+          strategic_mentor: 'Strategic mentor'
+        }[mode] || 'Coach';
+      }
+
       function setBusy(message, busy = true) {
         const pill = document.getElementById('statusPill');
         document.getElementById('statusText').textContent = message;
@@ -473,7 +488,7 @@
         el.innerHTML = items.map(item => `
           <div class="history">
             <strong>${item.taskTitle}</strong>
-            <small>${item.domain} · +${item.xpAwarded} XP${item.badgeUnlocked ? ' · badge: ' + item.badgeUnlocked : ''}${item.isCustom ? ' · real work' : ''}</small>
+            <small>${item.domain} · +${item.xpAwarded} XP · prompt ${item.promptScore || 0}/100 · output ${item.outputScore || 0}/100${item.badgeUnlocked ? ' · badge: ' + item.badgeUnlocked : ''}${item.isCustom ? ' · real work' : ''}</small>
             <p class="muted" style="margin-top:8px;">${item.coachSummary}</p>
           </div>
         `).join('');
@@ -485,8 +500,10 @@
         document.getElementById('xp').textContent = data.profile.xp;
         document.getElementById('streak').textContent = `${data.profile.streak} 🔥`;
         document.getElementById('completedCount').textContent = data.stats.tasksCompleted;
-        document.getElementById('avgOutcome').textContent = data.stats.averageOutcomeFit;
+        document.getElementById('avgOutputScore').textContent = data.stats.averageOutputScore;
+        document.getElementById('avgPromptScore').textContent = data.stats.averagePromptScore;
         document.getElementById('avgClarity').textContent = data.stats.averageClarity;
+        document.getElementById('avgStrategicDepth').textContent = data.stats.averageStrategicDepth;
         document.getElementById('customPromptReps').textContent = data.stats.customPromptReps;
         document.getElementById('nextBadgeLabel').textContent = data.nextBadge.label;
         document.getElementById('nextBadgeProgress').textContent = data.nextBadge.progress;
@@ -578,6 +595,10 @@
           document.getElementById('coachMissing').textContent = data.coaching.missing;
           document.getElementById('coachWhy').textContent = data.coaching.whyMatters;
           document.getElementById('revisedPrompt').textContent = data.coaching.revisedPrompt;
+          document.getElementById('coachSummaryTitle').textContent = `4. Coaching — ${modeLabel(data.coaching.mode)}`;
+          document.getElementById('coachModeChip').textContent = modeLabel(data.coaching.mode);
+          document.getElementById('coachPromptScore').textContent = `Prompt score ${data.coaching.promptScore}/100`;
+          document.getElementById('coachOutputScore').textContent = `Output score ${data.coaching.outputScore}/100`;
           document.getElementById('coachSection').open = true;
           document.getElementById('nextQuest').classList.remove('hidden');
           showToast(data.message || data.celebration);
@@ -607,6 +628,10 @@
           document.getElementById('coachMissing').textContent = data.coaching.missing;
           document.getElementById('coachWhy').textContent = data.coaching.whyMatters;
           document.getElementById('revisedPrompt').textContent = data.coaching.revisedPrompt;
+          document.getElementById('coachSummaryTitle').textContent = `4. Coaching — ${modeLabel(data.coaching.mode)}`;
+          document.getElementById('coachModeChip').textContent = modeLabel(data.coaching.mode);
+          document.getElementById('coachPromptScore').textContent = `Prompt score ${data.coaching.promptScore}/100`;
+          document.getElementById('coachOutputScore').textContent = `Output score ${data.coaching.outputScore}/100`;
           document.getElementById('coachSection').open = true;
           showToast('Coaching refreshed with the selected mode.');
         } catch (error) {
@@ -628,6 +653,10 @@
           renderTask(data.today.task, data.today.rationale, data.today.source);
           document.getElementById('nextQuest').classList.add('hidden');
           document.getElementById('coachSection').open = false;
+          document.getElementById('coachSummaryTitle').textContent = '4. Coaching';
+          document.getElementById('coachModeChip').textContent = 'Coach';
+          document.getElementById('coachPromptScore').textContent = 'Prompt score —';
+          document.getElementById('coachOutputScore').textContent = 'Output score —';
           showToast('Next quest loaded.');
         } catch (error) {
           showToast(`Could not load the next quest: ${error.message}`, 'error');
@@ -647,6 +676,10 @@
           setMode('scenario');
           renderTask(data.today.task, data.today.rationale, data.today.source);
           document.getElementById('nextQuest').classList.add('hidden');
+          document.getElementById('coachSummaryTitle').textContent = '4. Coaching';
+          document.getElementById('coachModeChip').textContent = 'Coach';
+          document.getElementById('coachPromptScore').textContent = 'Prompt score —';
+          document.getElementById('coachOutputScore').textContent = 'Output score —';
           showToast('Fresh gym scenario loaded.');
         } catch (error) {
           showToast(`Could not load a new scenario: ${error.message}`, 'error');
