@@ -1,302 +1,443 @@
 import json
 import os
-from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from collections import Counter
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
-from urllib import request
+from urllib import error, request
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-import psycopg
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from psycopg.rows import dict_row
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, create_engine, desc, func, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
+
+APP_NAME = "Gwen Prompt Gym"
+LEVEL_SIZE = 140
 
 
-APP_TITLE = "Gwen Prompt Gym"
-LEARNER_NAME = "Gwen"
-LEARNERS_TABLE = "gwen_prompt_gym_learners"
-ATTEMPTS_TABLE = "gwen_prompt_gym_task_attempts"
-BADGES_TABLE = "gwen_prompt_gym_badges"
-RAW_DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
-OPENAI_RECOMMENDER_MODEL = os.getenv("OPENAI_RECOMMENDER_MODEL", "gpt-4.1-mini")
+class Base(DeclarativeBase):
+    pass
 
-TASKS = [
+
+class LearnerProfile(Base):
+    __tablename__ = "learner_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    display_name: Mapped[str] = mapped_column(String(80), default="Learner")
+    xp: Mapped[int] = mapped_column(Integer, default=0)
+    streak: Mapped[int] = mapped_column(Integer, default=0)
+    last_completed_on: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class ScenarioTask(Base):
+    __tablename__ = "scenario_tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    slug: Mapped[str] = mapped_column(String(80), unique=True)
+    title: Mapped[str] = mapped_column(String(120))
+    domain: Mapped[str] = mapped_column(String(40))
+    skill_focus: Mapped[str] = mapped_column(String(60))
+    level_min: Mapped[int] = mapped_column(Integer, default=1)
+    difficulty: Mapped[int] = mapped_column(Integer, default=1)
+    xp_reward: Mapped[int] = mapped_column(Integer, default=30)
+    prompt_brief: Mapped[str] = mapped_column(Text)
+    learner_goal: Mapped[str] = mapped_column(Text)
+    reflection_hint: Mapped[str] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    attempts: Mapped[list["PromptAttempt"]] = relationship(back_populates="task")
+
+
+class PromptAttempt(Base):
+    __tablename__ = "prompt_attempts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("scenario_tasks.id"))
+    prompt_text: Mapped[str] = mapped_column(Text)
+    reflection_text: Mapped[str] = mapped_column(Text)
+    outcome_fit: Mapped[int] = mapped_column(Integer, default=3)
+    clarity_rating: Mapped[int] = mapped_column(Integer, default=3)
+    structure_rating: Mapped[int] = mapped_column(Integer, default=3)
+    strategic_rating: Mapped[int] = mapped_column(Integer, default=3)
+    confidence_after: Mapped[int] = mapped_column(Integer, default=3)
+    improvement_focus: Mapped[str] = mapped_column(String(80), default="clarity")
+    xp_awarded: Mapped[int] = mapped_column(Integer, default=0)
+    coach_summary: Mapped[str] = mapped_column(Text)
+    coach_tweaks: Mapped[str] = mapped_column(Text)
+    revised_prompt: Mapped[str] = mapped_column(Text)
+    badge_unlocked: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    task: Mapped[ScenarioTask] = relationship(back_populates="attempts")
+
+
+class BadgeAward(Base):
+    __tablename__ = "badge_awards"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(80), unique=True)
+    label: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class DailyRecommendation(Base):
+    __tablename__ = "daily_recommendations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    day_key: Mapped[str] = mapped_column(String(20), index=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("scenario_tasks.id"))
+    rationale: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(20), default="heuristic")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./gwen_prompt_gym.db").strip().strip('"').strip("'")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+DATABASE_URL = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
+if DATABASE_URL.startswith("postgresql+psycopg://"):
+    split_url = urlsplit(DATABASE_URL)
+    query_items = []
+    for key, value in parse_qsl(split_url.query, keep_blank_values=True):
+        query_items.append(("sslmode", value) if key == "ssl" else (key, value))
+    DATABASE_URL = urlunsplit((split_url.scheme, split_url.netloc, split_url.path, urlencode(query_items), split_url.fragment))
+
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+engine = create_engine(DATABASE_URL, future=True, pool_pre_ping=True, connect_args=connect_args)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, future=True)
+
+app = FastAPI(title=APP_NAME)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+SCENARIOS = [
     {
-        "id": "clarify-goal",
-        "title": "Brief Whisperer",
-        "tagline": "Turn a fuzzy ask into a sharp strategic prompt.",
-        "scenario": "A CEO says: 'Figure out why this quarter felt off and tell me what to do next.'",
-        "instructions": "Write a prompt that gets an AI assistant to clarify the goal, surface missing context, and frame the output for an exec audience.",
-        "focus": "clarity",
-        "level": 1,
-        "points": 70,
-        "badge": "Signal Finder",
+        "slug": "exec-update-calm",
+        "title": "Turn a messy status ask into a sharp executive update",
+        "domain": "strategy",
+        "skill_focus": "clarity",
+        "level_min": 1,
+        "difficulty": 1,
+        "xp_reward": 30,
+        "prompt_brief": "You need AI help drafting a concise executive update about a delayed initiative with political sensitivity.",
+        "learner_goal": "Get a response that is clear, calm, and useful for leadership without sounding defensive.",
+        "reflection_hint": "Notice whether your prompt gave enough context, audience framing, tone constraints, and output structure.",
     },
     {
-        "id": "exec-summary",
-        "title": "Boardroom Compress",
-        "tagline": "Condense noise into a crisp executive readout.",
-        "scenario": "You have raw notes from five customer interviews and three internal leaders.",
-        "instructions": "Create a prompt that asks the AI to produce a 5-bullet exec summary, highlight risks, and separate evidence from inference.",
-        "focus": "synthesis",
-        "level": 1,
-        "points": 80,
-        "badge": "Crisp Communicator",
+        "slug": "decision-options",
+        "title": "Ask AI for decision options, not just one answer",
+        "domain": "management",
+        "skill_focus": "option design",
+        "level_min": 1,
+        "difficulty": 1,
+        "xp_reward": 30,
+        "prompt_brief": "You are weighing 3 possible team priorities for the next quarter and want AI to frame the tradeoffs.",
+        "learner_goal": "Elicit options, tradeoffs, and a recommendation logic rather than generic advice.",
+        "reflection_hint": "Did your prompt force the AI to surface assumptions and compare options explicitly?",
     },
     {
-        "id": "tradeoff-mapper",
-        "title": "Tradeoff Tamer",
-        "tagline": "Make the model show its work on options and consequences.",
-        "scenario": "A leadership team is split between growth, margin, and product quality priorities.",
-        "instructions": "Write a prompt that makes the AI compare 3 strategic options, call out tradeoffs, and recommend a decision framework rather than a shallow answer.",
-        "focus": "tradeoffs",
-        "level": 2,
-        "points": 95,
-        "badge": "Decision Cartographer",
+        "slug": "feedback-conversation",
+        "title": "Prepare for a hard but fair feedback conversation",
+        "domain": "leadership",
+        "skill_focus": "audience awareness",
+        "level_min": 1,
+        "difficulty": 2,
+        "xp_reward": 36,
+        "prompt_brief": "You want AI help preparing language for a feedback discussion with a strong but defensive colleague.",
+        "learner_goal": "Get wording that is direct, respectful, and practical instead of vague or over-softened.",
+        "reflection_hint": "Check whether your prompt gave enough interpersonal context and a clear desired tone.",
     },
     {
-        "id": "stakeholder-reframe",
-        "title": "Stakeholder Shape-shift",
-        "tagline": "Adapt one analysis for multiple audiences.",
-        "scenario": "You need one message for the CFO, one for product leaders, and one for frontline managers.",
-        "instructions": "Craft a prompt that asks the AI to rewrite the same recommendation for each audience while keeping the facts consistent.",
-        "focus": "audience",
-        "level": 2,
-        "points": 90,
-        "badge": "Audience Alchemist",
+        "slug": "meeting-brief",
+        "title": "Create a leadership meeting brief with sharper structure",
+        "domain": "management",
+        "skill_focus": "structure",
+        "level_min": 2,
+        "difficulty": 2,
+        "xp_reward": 40,
+        "prompt_brief": "You need AI help shaping a short meeting brief for a cross-functional leadership discussion.",
+        "learner_goal": "Produce an output with a clear structure: purpose, context, options, recommendation, and open questions.",
+        "reflection_hint": "Did you ask for a concrete output format or leave structure to chance?",
     },
     {
-        "id": "scenario-planning",
-        "title": "Scenario Spark",
-        "tagline": "Push the AI to think in branches, not single paths.",
-        "scenario": "A new competitor may enter your market in the next 6 months.",
-        "instructions": "Create a prompt that generates best case, base case, and worst case scenarios with leadership actions for each.",
-        "focus": "foresight",
-        "level": 3,
-        "points": 110,
-        "badge": "Future Scout",
+        "slug": "board-risk-note",
+        "title": "Prompt for a risk note that leadership can act on",
+        "domain": "strategy",
+        "skill_focus": "strategic judgment",
+        "level_min": 2,
+        "difficulty": 3,
+        "xp_reward": 45,
+        "prompt_brief": "You need AI to help write a short note on a strategic risk that deserves leadership attention.",
+        "learner_goal": "Elicit signal, impact, and decision relevance instead of generic risk language.",
+        "reflection_hint": "Did the prompt push the AI toward prioritization and implications, not just description?",
     },
     {
-        "id": "meeting-prep",
-        "title": "Meeting Boss Fight",
-        "tagline": "Prompt for sharper questions before the room gets expensive.",
-        "scenario": "You have a high-stakes strategy review with the executive team tomorrow morning.",
-        "instructions": "Write a prompt that asks the AI to prepare the most important questions, likely objections, and a suggested meeting flow.",
-        "focus": "facilitation",
-        "level": 3,
-        "points": 105,
-        "badge": "Room Runner",
+        "slug": "delegate-better",
+        "title": "Write a prompt for delegation support, not micromanagement",
+        "domain": "leadership",
+        "skill_focus": "constraints",
+        "level_min": 2,
+        "difficulty": 2,
+        "xp_reward": 42,
+        "prompt_brief": "You want AI help framing a delegated task so the other person gets clarity and ownership.",
+        "learner_goal": "Get an output that defines success, guardrails, and check-ins without prescribing every step.",
+        "reflection_hint": "Check whether your prompt distinguished outcomes, constraints, and autonomy.",
+    },
+    {
+        "slug": "stakeholder-map",
+        "title": "Make AI think like a stakeholder strategist",
+        "domain": "strategy",
+        "skill_focus": "context depth",
+        "level_min": 3,
+        "difficulty": 3,
+        "xp_reward": 50,
+        "prompt_brief": "You need AI help analyzing a stakeholder landscape before a contentious change initiative.",
+        "learner_goal": "Get a nuanced mapping of interests, risks, likely resistance, and engagement moves.",
+        "reflection_hint": "Did your prompt include political context and ask for differentiated stakeholder handling?",
+    },
+    {
+        "slug": "team-retro",
+        "title": "Design a smarter retrospective prompt",
+        "domain": "management",
+        "skill_focus": "learning loop",
+        "level_min": 3,
+        "difficulty": 3,
+        "xp_reward": 48,
+        "prompt_brief": "You want AI to suggest a retrospective format after a rough project cycle.",
+        "learner_goal": "Get a format that surfaces patterns, tensions, and concrete experiments rather than bland lessons learned.",
+        "reflection_hint": "Did you push for diagnosis and next-step quality, not just a facilitation template?",
     },
 ]
-TASK_LOOKUP = {task["id"]: task for task in TASKS}
-SCHEMA_READY = False
 
-SCHEMA_SQL = f"""
-CREATE TABLE IF NOT EXISTS {LEARNERS_TABLE} (
-    id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    created_at TEXT NOT NULL,
-    total_points INTEGER NOT NULL DEFAULT 0,
-    skill_level INTEGER NOT NULL DEFAULT 1,
-    streak_days INTEGER NOT NULL DEFAULT 0,
-    last_completed_on TEXT,
-    feedback_summary TEXT NOT NULL DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS {ATTEMPTS_TABLE} (
-    id SERIAL PRIMARY KEY,
-    learner_id INTEGER NOT NULL REFERENCES {LEARNERS_TABLE}(id),
-    task_id TEXT NOT NULL,
-    response_text TEXT NOT NULL,
-    coach_feedback TEXT NOT NULL,
-    gwen_feedback TEXT NOT NULL,
-    points_awarded INTEGER NOT NULL,
-    completed_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS {BADGES_TABLE} (
-    id SERIAL PRIMARY KEY,
-    learner_id INTEGER NOT NULL REFERENCES {LEARNERS_TABLE}(id),
-    badge_name TEXT NOT NULL,
-    awarded_at TEXT NOT NULL,
-    UNIQUE (learner_id, badge_name)
-);
-"""
+BADGES = [
+    {"code": "first_rep", "label": "First Rep", "description": "Completed the first prompt workout."},
+    {"code": "three_day_streak", "label": "Three-Day Streak", "description": "Completed prompt workouts on three consecutive days."},
+    {"code": "clarity_builder", "label": "Clarity Builder", "description": "Completed two reps focused on clarity and structure."},
+    {"code": "strategy_lens", "label": "Strategy Lens", "description": "Completed three strategy-domain scenarios."},
+    {"code": "reflective_operator", "label": "Reflective Operator", "description": "Wrote high-quality reflections in three different reps."},
+]
 
 
-class SubmitTaskPayload(BaseModel):
-    learner_name: str = Field(default=LEARNER_NAME)
-    task_id: str
-    response_text: str = Field(min_length=8, max_length=4000)
-    gwen_feedback: str = Field(min_length=2, max_length=500)
+class CompleteAttemptIn(BaseModel):
+    task_id: int
+    prompt_text: str = Field(min_length=20, max_length=5000)
+    reflection_text: str = Field(min_length=20, max_length=2500)
+    outcome_fit: int = Field(ge=1, le=5)
+    clarity_rating: int = Field(ge=1, le=5)
+    structure_rating: int = Field(ge=1, le=5)
+    strategic_rating: int = Field(ge=1, le=5)
+    confidence_after: int = Field(ge=1, le=5)
+    improvement_focus: str = Field(min_length=3, max_length=80)
 
 
-app = FastAPI(title=APP_TITLE)
+class RefreshTaskIn(BaseModel):
+    display_name: str | None = Field(default=None, max_length=80)
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+@dataclass
+class RecommendationResult:
+    task: ScenarioTask
+    rationale: str
+    source: str
 
 
-def today_iso() -> str:
-    return date.today().isoformat()
+@dataclass
+class CoachingResult:
+    summary: str
+    tweaks: str
+    revised_prompt: str
+    source: str
 
 
-def normalize_database_url(raw_url: str | None) -> str | None:
-    if not raw_url:
-        return None
-    parsed = urlsplit(raw_url)
-    scheme = parsed.scheme
-    if scheme == "postgresql+asyncpg":
-        scheme = "postgresql"
-    elif scheme == "postgres+asyncpg":
-        scheme = "postgres"
-    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    if "ssl" in query and "sslmode" not in query:
-        query["sslmode"] = query.pop("ssl")
-    return urlunsplit((scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-DATABASE_URL = normalize_database_url(RAW_DATABASE_URL)
+def current_day_key() -> str:
+    return utc_now().date().isoformat()
 
 
-def require_database_url() -> str:
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL is required. This app now uses Neon Postgres only.")
-    return DATABASE_URL
+def level_from_xp(xp: int) -> int:
+    return max(1, (xp // LEVEL_SIZE) + 1)
 
 
-def ensure_schema() -> None:
-    global SCHEMA_READY
-    if SCHEMA_READY:
-        return
-    with psycopg.connect(require_database_url(), row_factory=dict_row) as conn:
-        with conn.cursor() as cur:
-            cur.execute(SCHEMA_SQL)
-            cur.execute(
-                f"""
-                INSERT INTO {LEARNERS_TABLE} (name, created_at, total_points, skill_level, streak_days, feedback_summary)
-                VALUES (%s, %s, 0, 1, 0, %s)
-                ON CONFLICT (name) DO NOTHING
-                """,
-                (LEARNER_NAME, utc_now(), "Fresh start. Gwen is warming up her strategic prompting muscles."),
-            )
-        conn.commit()
-    SCHEMA_READY = True
+def progress_in_level(xp: int) -> dict[str, int]:
+    level = level_from_xp(xp)
+    base = (level - 1) * LEVEL_SIZE
+    return {"level": level, "current": xp - base, "needed": LEVEL_SIZE}
 
 
-@contextmanager
-def db_conn():
-    ensure_schema()
-    with psycopg.connect(require_database_url(), row_factory=dict_row) as conn:
-        yield conn
+@app.on_event("startup")
+def startup() -> None:
+    Base.metadata.create_all(bind=engine)
+    seed_data()
 
 
-def row_get(row: Any, key: str) -> Any:
-    return row[key]
+def seed_data() -> None:
+    with SessionLocal() as session:
+        if not session.get(LearnerProfile, 1):
+            session.add(LearnerProfile(id=1))
+        existing = {slug for (slug,) in session.execute(select(ScenarioTask.slug)).all()}
+        for item in SCENARIOS:
+            if item["slug"] not in existing:
+                session.add(ScenarioTask(**item))
+        session.commit()
 
 
-def get_learner(conn: Any, learner_name: str = LEARNER_NAME) -> Any:
-    learner = conn.execute(f"SELECT * FROM {LEARNERS_TABLE} WHERE name = %s", (learner_name,)).fetchone()
-    if not learner:
-        raise HTTPException(status_code=404, detail="Learner not found")
-    return learner
-
-
-def get_attempted_task_ids(conn: Any, learner_id: int) -> list[str]:
-    rows = conn.execute(
-        f"SELECT task_id FROM {ATTEMPTS_TABLE} WHERE learner_id = %s ORDER BY completed_at DESC",
-        (learner_id,),
-    ).fetchall()
-    return [row_get(row, "task_id") for row in rows]
-
-
-def summarize_progress(conn: Any, learner: Any) -> dict[str, Any]:
-    learner_id = row_get(learner, "id")
-    attempts = conn.execute(
-        f"""
-        SELECT task_id, points_awarded, coach_feedback, gwen_feedback, completed_at
-        FROM {ATTEMPTS_TABLE}
-        WHERE learner_id = %s
-        ORDER BY completed_at DESC
-        """,
-        (learner_id,),
-    ).fetchall()
-    badges = conn.execute(
-        f"SELECT badge_name FROM {BADGES_TABLE} WHERE learner_id = %s ORDER BY awarded_at",
-        (learner_id,),
-    ).fetchall()
-    attempted_ids = [row_get(row, "task_id") for row in attempts]
-    completion_ratio = round(len(attempted_ids) / len(TASKS), 2)
+def serialize_task(task: ScenarioTask) -> dict[str, Any]:
     return {
-        "learner": row_get(learner, "name"),
-        "total_points": row_get(learner, "total_points"),
-        "skill_level": row_get(learner, "skill_level"),
-        "streak_days": row_get(learner, "streak_days"),
-        "last_completed_on": row_get(learner, "last_completed_on"),
-        "feedback_summary": row_get(learner, "feedback_summary"),
-        "completed_tasks": attempted_ids,
-        "attempt_count": len(attempted_ids),
-        "badges": [row_get(row, "badge_name") for row in badges],
-        "completion_ratio": completion_ratio,
-        "recent_attempts": [dict(row) for row in attempts[:4]],
+        "id": task.id,
+        "slug": task.slug,
+        "title": task.title,
+        "domain": task.domain,
+        "skillFocus": task.skill_focus,
+        "levelMin": task.level_min,
+        "difficulty": task.difficulty,
+        "xpReward": task.xp_reward,
+        "promptBrief": task.prompt_brief,
+        "learnerGoal": task.learner_goal,
+        "reflectionHint": task.reflection_hint,
     }
 
 
-def heuristic_next_task(learner: Any, attempted_ids: list[str], feedback_summary: str) -> dict[str, Any]:
-    remaining = [task for task in TASKS if task["id"] not in attempted_ids]
-    if not remaining:
-        remaining = TASKS
-    target_level = max(1, min(3, row_get(learner, "skill_level")))
-    feedback_text = feedback_summary.lower()
-    focus_weights = {
-        "clarity": 0,
-        "synthesis": 0,
-        "tradeoffs": 0,
-        "audience": 0,
-        "foresight": 0,
-        "facilitation": 0,
+def serialize_attempt(attempt: PromptAttempt, task: ScenarioTask) -> dict[str, Any]:
+    return {
+        "id": attempt.id,
+        "taskTitle": task.title,
+        "domain": task.domain,
+        "promptText": attempt.prompt_text,
+        "reflectionText": attempt.reflection_text,
+        "outcomeFit": attempt.outcome_fit,
+        "clarityRating": attempt.clarity_rating,
+        "structureRating": attempt.structure_rating,
+        "strategicRating": attempt.strategic_rating,
+        "confidenceAfter": attempt.confidence_after,
+        "improvementFocus": attempt.improvement_focus,
+        "xpAwarded": attempt.xp_awarded,
+        "coachSummary": attempt.coach_summary,
+        "coachTweaks": attempt.coach_tweaks,
+        "revisedPrompt": attempt.revised_prompt,
+        "badgeUnlocked": attempt.badge_unlocked,
+        "createdAt": attempt.created_at.isoformat(),
     }
-    if "clar" in feedback_text or "specific" in feedback_text:
-        focus_weights["clarity"] += 2
-    if "audience" in feedback_text or "stakeholder" in feedback_text:
-        focus_weights["audience"] += 2
-    if "option" in feedback_text or "tradeoff" in feedback_text:
-        focus_weights["tradeoffs"] += 2
-    ranked = sorted(
-        remaining,
-        key=lambda task: (
-            abs(task["level"] - target_level),
-            -focus_weights.get(task["focus"], 0),
-            task["level"],
-        ),
-    )
-    return ranked[0]
 
 
-def recommend_next_task_with_llm(learner: Any, progress: dict[str, Any]) -> tuple[dict[str, Any], str]:
-    remaining = [task for task in TASKS if task["id"] not in progress["completed_tasks"]]
-    if not remaining:
-        remaining = TASKS
+def summarize_history(session: Session, limit: int = 8) -> list[dict[str, Any]]:
+    rows = session.execute(
+        select(PromptAttempt, ScenarioTask)
+        .join(ScenarioTask, PromptAttempt.task_id == ScenarioTask.id)
+        .order_by(desc(PromptAttempt.created_at))
+        .limit(limit)
+    ).all()
+    history = []
+    for attempt, task in rows:
+        history.append(
+            {
+                "task_title": task.title,
+                "domain": task.domain,
+                "skill_focus": task.skill_focus,
+                "outcome_fit": attempt.outcome_fit,
+                "clarity_rating": attempt.clarity_rating,
+                "structure_rating": attempt.structure_rating,
+                "strategic_rating": attempt.strategic_rating,
+                "confidence_after": attempt.confidence_after,
+                "improvement_focus": attempt.improvement_focus,
+                "reflection_text": attempt.reflection_text,
+            }
+        )
+    return history
 
+
+def heuristic_recommendation(session: Session, profile: LearnerProfile) -> RecommendationResult:
+    level = level_from_xp(profile.xp)
+    tasks = session.execute(
+        select(ScenarioTask).where(ScenarioTask.active.is_(True), ScenarioTask.level_min <= level + 1)
+    ).scalars().all()
+    if not tasks:
+        raise HTTPException(status_code=500, detail="No scenario tasks available")
+
+    history = summarize_history(session, limit=12)
+    recent_titles = {item["task_title"] for item in history[:3]}
+    focus_counts = Counter(item["improvement_focus"] for item in history)
+    weak_domains = Counter(item["domain"] for item in history if item["outcome_fit"] <= 3 or item["strategic_rating"] <= 3)
+
+    def score(task: ScenarioTask) -> float:
+        value = float(task.xp_reward)
+        value += 10 if task.level_min == level else 0
+        value += weak_domains.get(task.domain, 0) * 8
+        value += focus_counts.get(task.skill_focus, 0) * 5
+        value -= 18 if task.title in recent_titles else 0
+        value += task.difficulty * 2
+        return value
+
+    best = max(tasks, key=score)
+    rationale = f"Picked to match level {level} while targeting domains and prompt skills that still look uneven in your recent reflections."
+    return RecommendationResult(task=best, rationale=rationale, source="heuristic")
+
+
+def call_openai(payload: dict[str, Any]) -> dict[str, Any] | None:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        fallback = heuristic_next_task(learner, progress["completed_tasks"], row_get(learner, "feedback_summary"))
-        return fallback, "Heuristic pick because OPENAI_API_KEY is missing."
+        return None
+    req = request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=25) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except (error.URLError, error.HTTPError, TimeoutError, json.JSONDecodeError):
+        return None
+
+
+def extract_output_text(data: dict[str, Any]) -> str | None:
+    output = data.get("output")
+    if not isinstance(output, list):
+        return data.get("output_text")
+    for item in output:
+        if item.get("type") != "message":
+            continue
+        for content in item.get("content", []):
+            if content.get("type") == "output_text" and isinstance(content.get("text"), str):
+                return content["text"]
+    return data.get("output_text")
+
+
+def llm_recommendation(session: Session, profile: LearnerProfile) -> RecommendationResult | None:
+    level = level_from_xp(profile.xp)
+    candidates = session.execute(
+        select(ScenarioTask).where(ScenarioTask.active.is_(True), ScenarioTask.level_min <= level + 1).order_by(ScenarioTask.level_min, ScenarioTask.id)
+    ).scalars().all()
+    if not candidates:
+        return None
 
     payload = {
-        "model": OPENAI_RECOMMENDER_MODEL,
+        "model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
         "input": [
             {
                 "role": "system",
                 "content": [
                     {
                         "type": "input_text",
-                        "text": (
-                            "You choose the next best micro-learning prompt task for a leadership-focused learner. "
-                            "Return strict JSON with keys task_id and reason. Keep reason under 28 words."
-                        ),
+                        "text": "You choose the next prompt-gym scenario for a management learner. Favor variety, progression, and the weakest current skill. Respond only as JSON with task_id and rationale."
                     }
                 ],
             },
@@ -307,231 +448,339 @@ def recommend_next_task_with_llm(learner: Any, progress: dict[str, Any]) -> tupl
                         "type": "input_text",
                         "text": json.dumps(
                             {
-                                "learner": {
-                                    "name": row_get(learner, "name"),
-                                    "skill_level": row_get(learner, "skill_level"),
-                                    "total_points": row_get(learner, "total_points"),
-                                    "streak_days": row_get(learner, "streak_days"),
-                                    "feedback_summary": row_get(learner, "feedback_summary"),
+                                "profile": {
+                                    "xp": profile.xp,
+                                    "level": level,
+                                    "streak": profile.streak,
                                 },
-                                "recent_attempts": progress["recent_attempts"],
-                                "remaining_tasks": remaining,
+                                "recent_history": summarize_history(session, limit=8),
+                                "candidates": [
+                                    {
+                                        "id": task.id,
+                                        "title": task.title,
+                                        "domain": task.domain,
+                                        "skill_focus": task.skill_focus,
+                                        "difficulty": task.difficulty,
+                                        "learner_goal": task.learner_goal,
+                                    }
+                                    for task in candidates
+                                ],
                             }
                         ),
                     }
                 ],
             },
         ],
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "task_recommendation",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "task_id": {"type": "string"},
-                        "reason": {"type": "string"},
-                    },
-                    "required": ["task_id", "reason"],
-                    "additionalProperties": False,
-                },
-            }
-        },
+        "text": {"format": {"type": "json_schema", "name": "next_task", "schema": {"type": "object", "properties": {"task_id": {"type": "integer"}, "rationale": {"type": "string"}}, "required": ["task_id", "rationale"], "additionalProperties": False}}},
     }
-    req = request.Request(
-        "https://api.openai.com/v1/responses",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
+    data = call_openai(payload)
+    if not data:
+        return None
     try:
-        with request.urlopen(req, timeout=25) as response:
-            body = json.loads(response.read().decode("utf-8"))
-        output_text = body["output"][0]["content"][0]["text"]
-        parsed = json.loads(output_text)
-        task = TASK_LOOKUP.get(parsed.get("task_id"))
-        if task:
-            return task, parsed.get("reason", "LLM-picked next challenge.")
-    except Exception:
-        pass
-
-    fallback = heuristic_next_task(learner, progress["completed_tasks"], row_get(learner, "feedback_summary"))
-    return fallback, "Heuristic pick because the model recommendation was unavailable."
+        parsed = json.loads(extract_output_text(data) or "{}")
+        task = session.get(ScenarioTask, int(parsed["task_id"]))
+        if not task:
+            return None
+        return RecommendationResult(task=task, rationale=parsed["rationale"], source="llm")
+    except (KeyError, ValueError, json.JSONDecodeError, TypeError):
+        return None
 
 
-def award_points(task: dict[str, Any], response_text: str, gwen_feedback: str) -> tuple[int, str]:
-    richness = min(len(response_text) // 80, 20)
-    reflection = 10 if len(gwen_feedback.strip()) >= 20 else 4
-    points = task["points"] + richness + reflection
-    feedback = (
-        f"Strong move. You pushed on {task['focus']} and gave the model a sharper job to do. "
-        "Next time, tighten the output format and success criteria even more."
+def heuristic_coaching(task: ScenarioTask, payload: CompleteAttemptIn) -> CoachingResult:
+    strengths = []
+    gaps = []
+    if len(payload.prompt_text) > 220:
+        strengths.append("You gave the AI a meaningful amount of context.")
+    else:
+        gaps.append("Add more situational context so the AI can reason inside the real management situation.")
+    if "\n" in payload.prompt_text or ":" in payload.prompt_text:
+        strengths.append("Your prompt hints at structure instead of staying purely conversational.")
+    else:
+        gaps.append("Ask for a clearer output structure such as bullets, options, recommendation, and risks.")
+    if payload.strategic_rating <= 3:
+        gaps.append("Push harder on tradeoffs, risks, and decision relevance.")
+    if payload.clarity_rating <= 3:
+        gaps.append("State the audience and end-use more explicitly.")
+    if payload.outcome_fit >= 4:
+        strengths.append("Your self-rating suggests the prompt was already moving toward useful output.")
+
+    summary = " ".join(strengths[:2] + gaps[:2]) or "Solid rep. Keep tightening how you frame audience, decision, and output shape."
+    tweaks = "- Name the audience and decision context.\n- Add 2-3 concrete constraints.\n- Ask for options, tradeoffs, and a recommended structure."
+    revised_prompt = (
+        f"You are helping with a {task.domain} task. Context: {task.prompt_brief} "
+        f"Goal: {task.learner_goal} Audience: specify the decision-maker or stakeholder. "
+        f"Please produce: 1) key considerations, 2) 2-3 options with tradeoffs, 3) a recommendation, 4) risks or blind spots. "
+        f"Tone: practical, concise, and suitable for real management use.\n\n"
+        f"Draft to improve from:\n{payload.prompt_text.strip()}"
     )
-    return points, feedback
+    return CoachingResult(summary=summary, tweaks=tweaks, revised_prompt=revised_prompt, source="heuristic")
 
 
-def calculate_streak(last_completed_on: str | None, today: str, current_streak: int) -> int:
-    if not last_completed_on:
-        return 1
-    last_date = date.fromisoformat(str(last_completed_on))
-    today_date = date.fromisoformat(today)
-    delta_days = (today_date - last_date).days
-    if delta_days == 0:
-        return current_streak
-    if delta_days == 1:
-        return current_streak + 1
-    return 1
-
-
-@app.exception_handler(Exception)
-async def handle_exception(_request, exc: Exception):
-    if isinstance(exc, HTTPException):
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-    return JSONResponse(status_code=500, content={"detail": str(exc)})
-
-
-@app.get("/api/profile-state")
-def profile_state():
-    with db_conn() as conn:
-        learner = get_learner(conn)
-        progress = summarize_progress(conn, learner)
-        next_task, reason = recommend_next_task_with_llm(learner, progress)
-        return {
-            "app_title": APP_TITLE,
-            "storage_mode": "neon-postgres",
-            "profile": progress,
-            "levels": {
-                "current": row_get(learner, "skill_level"),
-                "next_level_points": row_get(learner, "skill_level") * 240,
+def llm_coaching(task: ScenarioTask, payload: CompleteAttemptIn) -> CoachingResult | None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "tweaks": {"type": "string"},
+            "revised_prompt": {"type": "string"},
+        },
+        "required": ["summary", "tweaks", "revised_prompt"],
+        "additionalProperties": False,
+    }
+    prompt_payload = {
+        "model": os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        "input": [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "You are a prompt coach for strategy, leadership, and management scenarios. The learner does not share the AI output, only the original prompt and their reflection. Assess the prompt quality from what is available. Give practical coaching. Do not mention privacy unless necessary. Respond only as JSON matching the schema."
+                    }
+                ],
             },
-            "next_task": {**next_task, "recommendation_reason": reason},
-        }
-
-
-@app.get("/api/next-task")
-def next_task():
-    with db_conn() as conn:
-        learner = get_learner(conn)
-        progress = summarize_progress(conn, learner)
-        task, reason = recommend_next_task_with_llm(learner, progress)
-        return {"task": task, "reason": reason}
-
-
-@app.get("/api/progress-summary")
-def progress_summary():
-    with db_conn() as conn:
-        learner = get_learner(conn)
-        progress = summarize_progress(conn, learner)
-        meter = min(100, int((progress["total_points"] / 720) * 100))
-        return {
-            "summary": progress,
-            "progress_meter": meter,
-            "remaining_tasks": [task for task in TASKS if task["id"] not in progress["completed_tasks"]],
-        }
-
-
-@app.post("/api/submit-task")
-def submit_task(payload: SubmitTaskPayload):
-    task = TASK_LOOKUP.get(payload.task_id)
-    if not task:
-        raise HTTPException(status_code=400, detail="Unknown task")
-
-    with db_conn() as conn:
-        learner = get_learner(conn, payload.learner_name)
-        learner_id = row_get(learner, "id")
-        points, coach_feedback = award_points(task, payload.response_text, payload.gwen_feedback)
-        completed_at = utc_now()
-
-        conn.execute(
-            f"""
-            INSERT INTO {ATTEMPTS_TABLE} (
-                learner_id, task_id, response_text, coach_feedback, gwen_feedback, points_awarded, completed_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                learner_id,
-                task["id"],
-                payload.response_text.strip(),
-                coach_feedback,
-                payload.gwen_feedback.strip(),
-                points,
-                completed_at,
-            ),
-        )
-        conn.execute(
-            f"""
-            INSERT INTO {BADGES_TABLE} (learner_id, badge_name, awarded_at)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (learner_id, badge_name) DO NOTHING
-            """,
-            (learner_id, task["badge"], completed_at),
-        )
-
-        today = today_iso()
-        streak_days = calculate_streak(row_get(learner, "last_completed_on"), today, row_get(learner, "streak_days"))
-        total_points = row_get(learner, "total_points") + points
-        skill_level = max(1, min(3, 1 + total_points // 240))
-        completion_count = len(get_attempted_task_ids(conn, learner_id))
-        feedback_summary = (
-            f"Latest reflection: {payload.gwen_feedback.strip()} | "
-            f"Recent strength: {task['focus']} | Total completions: {completion_count}"
-        )
-
-        conn.execute(
-            f"""
-            UPDATE {LEARNERS_TABLE}
-            SET total_points = %s, skill_level = %s, streak_days = %s, last_completed_on = %s, feedback_summary = %s
-            WHERE id = %s
-            """,
-            (total_points, skill_level, streak_days, today, feedback_summary, learner_id),
-        )
-        conn.commit()
-
-    with db_conn() as read_conn:
-        learner = get_learner(read_conn, payload.learner_name)
-        progress = summarize_progress(read_conn, learner)
-        next_task_data, reason = recommend_next_task_with_llm(learner, progress)
-        return {
-            "result": {
-                "points_awarded": points,
-                "coach_feedback": coach_feedback,
-                "badge_unlocked": task["badge"],
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": json.dumps(
+                            {
+                                "scenario": {
+                                    "title": task.title,
+                                    "domain": task.domain,
+                                    "skill_focus": task.skill_focus,
+                                    "brief": task.prompt_brief,
+                                    "goal": task.learner_goal,
+                                    "reflection_hint": task.reflection_hint,
+                                },
+                                "learner_submission": payload.model_dump(),
+                                "coaching_requirements": {
+                                    "summary_style": "2-4 sentences, direct and practical",
+                                    "tweaks_style": "3 bullet-like lines inside one string",
+                                    "revised_prompt_style": "improved full prompt the learner can paste into ChatGPT or Copilot"
+                                },
+                            }
+                        ),
+                    }
+                ],
             },
-            "profile": progress,
-            "next_task": {**next_task_data, "recommendation_reason": reason},
-        }
+        ],
+        "text": {"format": {"type": "json_schema", "name": "prompt_coaching", "schema": schema}},
+    }
+    data = call_openai(prompt_payload)
+    if not data:
+        return None
+    try:
+        parsed = json.loads(extract_output_text(data) or "{}")
+        return CoachingResult(
+            summary=parsed["summary"].strip(),
+            tweaks=parsed["tweaks"].strip(),
+            revised_prompt=parsed["revised_prompt"].strip(),
+            source="llm",
+        )
+    except (KeyError, TypeError, json.JSONDecodeError, AttributeError):
+        return None
+
+
+def get_or_create_today_recommendation(session: Session, profile: LearnerProfile, force_refresh: bool = False) -> DailyRecommendation:
+    day_key = current_day_key()
+    if not force_refresh:
+        existing = session.execute(
+            select(DailyRecommendation).where(DailyRecommendation.day_key == day_key).order_by(desc(DailyRecommendation.created_at))
+        ).scalars().first()
+        if existing:
+            return existing
+
+    result = llm_recommendation(session, profile) or heuristic_recommendation(session, profile)
+    rec = DailyRecommendation(day_key=day_key, task_id=result.task.id, rationale=result.rationale, source=result.source)
+    session.add(rec)
+    session.commit()
+    session.refresh(rec)
+    return rec
+
+
+def list_badges(session: Session) -> list[dict[str, Any]]:
+    awards = session.execute(select(BadgeAward).order_by(BadgeAward.created_at)).scalars().all()
+    return [{"code": a.code, "label": a.label, "description": a.description} for a in awards]
+
+
+def maybe_unlock_badge(session: Session, profile: LearnerProfile, attempt: PromptAttempt, task: ScenarioTask) -> str | None:
+    attempts = session.scalar(select(func.count(PromptAttempt.id))) or 0
+    strategy_count = session.scalar(
+        select(func.count(PromptAttempt.id)).join(ScenarioTask, PromptAttempt.task_id == ScenarioTask.id).where(ScenarioTask.domain == "strategy")
+    ) or 0
+    clarity_count = session.scalar(
+        select(func.count(PromptAttempt.id)).join(ScenarioTask, PromptAttempt.task_id == ScenarioTask.id).where(ScenarioTask.skill_focus.in_(["clarity", "structure"]))
+    ) or 0
+    reflective_count = session.scalar(select(func.count(PromptAttempt.id)).where(func.length(PromptAttempt.reflection_text) >= 180)) or 0
+
+    candidates = []
+    if attempts == 1:
+        candidates.append("first_rep")
+    if profile.streak >= 3:
+        candidates.append("three_day_streak")
+    if clarity_count >= 2:
+        candidates.append("clarity_builder")
+    if strategy_count >= 3:
+        candidates.append("strategy_lens")
+    if reflective_count >= 3:
+        candidates.append("reflective_operator")
+
+    existing = {code for (code,) in session.execute(select(BadgeAward.code)).all()}
+    unlocked = next((code for code in candidates if code not in existing), None)
+    if not unlocked:
+        return None
+    badge = next(item for item in BADGES if item["code"] == unlocked)
+    session.add(BadgeAward(**badge))
+    attempt.badge_unlocked = badge["label"]
+    return badge["label"]
 
 
 @app.get("/api/health")
-def health():
-    try:
-        ensure_schema()
-        with db_conn() as conn:
-            table_rows = conn.execute(
-                """
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'public'
-                  AND table_name IN (%s, %s, %s)
-                ORDER BY table_name
-                """,
-                (LEARNERS_TABLE, ATTEMPTS_TABLE, BADGES_TABLE),
-            ).fetchall()
+def health() -> dict[str, Any]:
+    return {"ok": True, "service": "gwen-prompt-gym", "timestamp": utc_now().isoformat()}
+
+
+@app.get("/api/bootstrap")
+def bootstrap() -> dict[str, Any]:
+    with SessionLocal() as session:
+        profile = session.get(LearnerProfile, 1)
+        if not profile:
+            raise HTTPException(status_code=500, detail="Learner profile missing")
+        recommendation = get_or_create_today_recommendation(session, profile)
+        task = session.get(ScenarioTask, recommendation.task_id)
+        attempts = session.execute(
+            select(PromptAttempt, ScenarioTask)
+            .join(ScenarioTask, PromptAttempt.task_id == ScenarioTask.id)
+            .order_by(desc(PromptAttempt.created_at))
+            .limit(6)
+        ).all()
+        progress = progress_in_level(profile.xp)
+        avg_outcome = session.scalar(select(func.avg(PromptAttempt.outcome_fit))) or 0
+        avg_clarity = session.scalar(select(func.avg(PromptAttempt.clarity_rating))) or 0
         return {
-            "ok": True,
-            "app": APP_TITLE,
-            "db_backend": "postgres",
-            "database_url_present": bool(DATABASE_URL),
-            "tables": [row_get(row, "table_name") for row in table_rows],
+            "profile": {
+                "displayName": profile.display_name,
+                "xp": profile.xp,
+                "streak": profile.streak,
+                "level": progress["level"],
+                "levelProgress": progress,
+            },
+            "today": {
+                "dayKey": recommendation.day_key,
+                "task": serialize_task(task),
+                "rationale": recommendation.rationale,
+                "source": recommendation.source,
+            },
+            "history": [serialize_attempt(attempt, task_row) for attempt, task_row in attempts],
+            "badges": list_badges(session),
+            "stats": {
+                "tasksCompleted": session.scalar(select(func.count(PromptAttempt.id))) or 0,
+                "averageOutcomeFit": round(avg_outcome, 2),
+                "averageClarity": round(avg_clarity, 2),
+            },
         }
-    except Exception as exc:
+
+
+@app.post("/api/task/refresh")
+def refresh_task(payload: RefreshTaskIn) -> dict[str, Any]:
+    with SessionLocal() as session:
+        profile = session.get(LearnerProfile, 1)
+        if not profile:
+            raise HTTPException(status_code=500, detail="Learner profile missing")
+        if payload.display_name:
+            profile.display_name = payload.display_name.strip() or profile.display_name
+        recommendation = get_or_create_today_recommendation(session, profile, force_refresh=True)
+        task = session.get(ScenarioTask, recommendation.task_id)
+        session.commit()
+        return {"today": {"dayKey": recommendation.day_key, "task": serialize_task(task), "rationale": recommendation.rationale, "source": recommendation.source}}
+
+
+@app.post("/api/task/complete")
+def complete_task(payload: CompleteAttemptIn) -> dict[str, Any]:
+    with SessionLocal() as session:
+        profile = session.get(LearnerProfile, 1)
+        task = session.get(ScenarioTask, payload.task_id)
+        if not profile or not task:
+            raise HTTPException(status_code=404, detail="Task or learner profile not found")
+
+        coaching = llm_coaching(task, payload) or heuristic_coaching(task, payload)
+        xp_awarded = task.xp_reward + max(payload.outcome_fit - 3, 0) * 5 + max(payload.clarity_rating - 3, 0) * 4 + max(payload.strategic_rating - 3, 0) * 4
+        attempt = PromptAttempt(
+            task_id=task.id,
+            prompt_text=payload.prompt_text.strip(),
+            reflection_text=payload.reflection_text.strip(),
+            outcome_fit=payload.outcome_fit,
+            clarity_rating=payload.clarity_rating,
+            structure_rating=payload.structure_rating,
+            strategic_rating=payload.strategic_rating,
+            confidence_after=payload.confidence_after,
+            improvement_focus=payload.improvement_focus.strip().lower(),
+            xp_awarded=xp_awarded,
+            coach_summary=coaching.summary,
+            coach_tweaks=coaching.tweaks,
+            revised_prompt=coaching.revised_prompt,
+        )
+        session.add(attempt)
+
+        previous_level = level_from_xp(profile.xp)
+        profile.xp += xp_awarded
+        today = utc_now().date()
+        if profile.last_completed_on and profile.last_completed_on.date() == today:
+            pass
+        elif profile.last_completed_on and (today - profile.last_completed_on.date()).days == 1:
+            profile.streak += 1
+        else:
+            profile.streak = 1
+        profile.last_completed_on = utc_now()
+
+        session.flush()
+        badge_label = maybe_unlock_badge(session, profile, attempt, task)
+        session.commit()
+        session.refresh(profile)
+        session.refresh(attempt)
+
+        new_level = level_from_xp(profile.xp)
+        recommendation = get_or_create_today_recommendation(session, profile, force_refresh=True)
+        next_task = session.get(ScenarioTask, recommendation.task_id)
+
         return {
-            "ok": False,
-            "app": APP_TITLE,
-            "db_backend": "postgres",
-            "database_url_present": bool(DATABASE_URL),
-            "error": str(exc),
+            "result": serialize_attempt(attempt, task),
+            "profile": {
+                "xp": profile.xp,
+                "streak": profile.streak,
+                "level": new_level,
+                "levelProgress": progress_in_level(profile.xp),
+                "levelUp": new_level > previous_level,
+            },
+            "coaching": {
+                "summary": coaching.summary,
+                "tweaks": coaching.tweaks,
+                "revisedPrompt": coaching.revised_prompt,
+                "source": coaching.source,
+            },
+            "badgeUnlocked": badge_label,
+            "next": {
+                "task": serialize_task(next_task),
+                "rationale": recommendation.rationale,
+                "source": recommendation.source,
+            },
+            "celebration": celebration_message(task.title, xp_awarded, new_level, new_level > previous_level, badge_label),
         }
+
+
+@app.get("/api/tasks")
+def list_tasks() -> dict[str, Any]:
+    with SessionLocal() as session:
+        tasks = session.execute(select(ScenarioTask).where(ScenarioTask.active.is_(True)).order_by(ScenarioTask.level_min, ScenarioTask.id)).scalars().all()
+        return {"tasks": [serialize_task(task) for task in tasks]}
+
+
+def celebration_message(task_title: str, xp_awarded: int, level: int, level_up: bool, badge_label: str | None) -> str:
+    parts = [f"You earned {xp_awarded} XP for '{task_title}'."]
+    if level_up:
+        parts.append(f"Level up: you are now level {level}.")
+    if badge_label:
+        parts.append(f"Badge unlocked: {badge_label}.")
+    return " ".join(parts)

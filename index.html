@@ -1,99 +1,380 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Gwen Prompt Gym</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      :root {
+        --bg: #0b1020;
+        --panel: rgba(16, 23, 42, 0.82);
+        --panel-2: rgba(12, 18, 34, 0.9);
+        --text: #eef2ff;
+        --muted: #a7b4d6;
+        --accent: #7c3aed;
+        --accent-2: #22c55e;
+        --line: rgba(148, 163, 184, 0.18);
+        --warm: #f59e0b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(124, 58, 237, 0.26), transparent 28%),
+          radial-gradient(circle at top right, rgba(34, 197, 94, 0.18), transparent 24%),
+          linear-gradient(180deg, #0b1020, #050814 78%);
+      }
+      .wrap {
+        width: min(1180px, calc(100vw - 28px));
+        margin: 0 auto;
+        padding: 24px 0 56px;
+      }
+      .hero, .grid { display: grid; gap: 18px; }
+      .hero { grid-template-columns: 1.2fr 0.8fr; }
+      .grid { grid-template-columns: 1.15fr 0.85fr; margin-top: 18px; }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        padding: 22px;
+        backdrop-filter: blur(14px);
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(124, 58, 237, 0.18);
+        color: #e9ddff;
+        font-weight: 700;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      h1, h2, h3, p { margin: 0; }
+      h1 { font-size: clamp(2rem, 4vw, 3.5rem); margin-top: 14px; }
+      .sub { color: var(--muted); line-height: 1.58; margin-top: 12px; max-width: 60ch; }
+      .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 20px; }
+      .stat, .mini, .history, .coach-box, .badge, .score-box {
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        border-radius: 18px;
+      }
+      .stat { padding: 16px; }
+      .stat strong { display: block; font-size: 1.55rem; margin-top: 6px; }
+      .muted { color: var(--muted); }
+      .progress { height: 12px; border-radius: 999px; background: rgba(148, 163, 184, 0.16); overflow: hidden; margin-top: 14px; }
+      .progress > span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), #a855f7, var(--accent-2)); }
+      .mini-grid, .score-grid, .row { display: grid; gap: 12px; }
+      .mini-grid, .score-grid { grid-template-columns: repeat(2, 1fr); margin-top: 16px; }
+      .mini, .score-box { padding: 14px; }
+      .task-title { font-size: 1.85rem; margin-top: 14px; }
+      .chips, .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+      .chip, .badge {
+        padding: 8px 12px;
+        border-radius: 999px;
+        font-size: 13px;
+      }
+      .chip { background: rgba(34, 197, 94, 0.13); color: #d9ffea; }
+      .badge { color: #fff3d5; background: rgba(245, 158, 11, 0.14); }
+      .brief, .coach-box, .history { padding: 16px; margin-top: 16px; line-height: 1.6; }
+      .coach-box { white-space: pre-wrap; }
+      .history-list { display: grid; gap: 12px; margin-top: 16px; }
+      .history small { color: var(--muted); display: block; margin-top: 8px; }
+      form { display: grid; gap: 14px; margin-top: 18px; }
+      label { display: grid; gap: 8px; color: var(--muted); font-size: 14px; }
+      textarea, input, select {
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 14px;
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        background: rgba(5, 8, 20, 0.78);
+        color: var(--text);
+        font: inherit;
+      }
+      textarea { min-height: 120px; resize: vertical; }
+      .row { grid-template-columns: repeat(2, 1fr); }
+      button {
+        border: 0;
+        border-radius: 14px;
+        padding: 13px 16px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .primary { color: #fff; background: linear-gradient(90deg, var(--accent), #9333ea); }
+      .secondary { color: var(--text); background: rgba(148, 163, 184, 0.16); }
+      .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+      .toast {
+        display: none;
+        margin-top: 14px;
+        padding: 14px 16px;
+        border-radius: 16px;
+        background: rgba(34, 197, 94, 0.12);
+        border: 1px solid rgba(34, 197, 94, 0.25);
+      }
+      .coach-panels { display: grid; gap: 12px; margin-top: 18px; }
+      @media (max-width: 960px) {
+        .hero, .grid, .stats, .mini-grid, .score-grid, .row { grid-template-columns: 1fr; }
+      }
+    </style>
   </head>
   <body>
-    <main class="shell">
-      <section class="hero card">
-        <p class="eyebrow">Micro-learning for leadership prompting</p>
-        <h1>Gwen Prompt Gym</h1>
-        <p class="subhead">
-          Tiny strategy drills. Better prompts. Cleaner executive thinking.
-        </p>
-        <div class="hero-grid">
-          <div>
-            <span class="label">Level</span>
-            <strong id="levelValue">-</strong>
+    <div class="wrap">
+      <section class="hero">
+        <div class="card">
+          <div class="pill">Prompt craft for real work</div>
+          <h1>Gwen Prompt Gym</h1>
+          <p class="sub">Practice prompting for strategy, leadership, and management without uploading sensitive AI outputs. You only bring back your prompt and your reflection. The app coaches the next iteration and adapts what comes next.</p>
+          <div class="stats">
+            <div class="stat"><span class="muted">Level</span><strong id="level">1</strong></div>
+            <div class="stat"><span class="muted">XP</span><strong id="xp">0</strong></div>
+            <div class="stat"><span class="muted">Streak</span><strong id="streak">0 🔥</strong></div>
           </div>
-          <div>
-            <span class="label">Points</span>
-            <strong id="pointsValue">-</strong>
-          </div>
-          <div>
-            <span class="label">Streak</span>
-            <strong id="streakValue">-</strong>
-          </div>
-          <div>
-            <span class="label">Badges</span>
-            <strong id="badgeValue">-</strong>
-          </div>
+          <div class="progress"><span id="progressBar"></span></div>
+          <p class="muted" id="progressLabel" style="margin-top:10px;">0 / 140 XP</p>
         </div>
-        <div class="meter-wrap">
-          <div class="meter-label">
-            <span>Progress meter</span>
-            <span id="meterText">0%</span>
+        <div class="card">
+          <div class="pill">Learning signal</div>
+          <p class="sub">The app scores your growth from the prompt itself, your structured self-ratings, and the quality of your reflection. That keeps the workflow light and privacy-safe.</p>
+          <div class="mini-grid">
+            <div class="mini"><strong id="completedCount">0</strong><p class="muted">reps completed</p></div>
+            <div class="mini"><strong id="avgOutcome">0</strong><p class="muted">avg outcome fit</p></div>
+            <div class="mini"><strong id="avgClarity">0</strong><p class="muted">avg clarity score</p></div>
+            <div class="mini"><strong id="badgeCount">0</strong><p class="muted">badges earned</p></div>
           </div>
-          <div class="meter">
-            <div class="meter-fill" id="meterFill"></div>
-          </div>
+          <div class="badges" id="badgeList"></div>
         </div>
       </section>
 
-      <section class="task card">
-        <div class="task-topline">
-          <p class="eyebrow">Next recommended drill</p>
-          <button id="refreshTaskButton" class="ghost">Shuffle wisely</button>
+      <section class="grid">
+        <div class="card">
+          <div class="pill">Today's scenario</div>
+          <h2 class="task-title" id="taskTitle">Loading…</h2>
+          <p class="muted" id="taskMeta"></p>
+          <div class="chips" id="taskChips"></div>
+          <div class="brief"><strong>Scenario</strong><p class="muted" id="taskBrief" style="margin-top:8px;"></p></div>
+          <div class="mini-grid">
+            <div class="mini"><strong>Learner goal</strong><p class="muted" id="learnerGoal" style="margin-top:8px;"></p></div>
+            <div class="mini"><strong>Reflection hint</strong><p class="muted" id="reflectionHint" style="margin-top:8px;"></p></div>
+          </div>
+          <div class="brief">
+            <strong>Why this next?</strong>
+            <p class="muted" id="taskRationale" style="margin-top:8px;"></p>
+            <p class="muted" style="margin-top:8px;">Engine: <span id="taskSource">heuristic</span></p>
+          </div>
+
+          <form id="attemptForm">
+            <label>
+              Prompt you used externally
+              <textarea id="promptText" placeholder="Paste the prompt you tested in ChatGPT, Copilot, or another external AI tool."></textarea>
+            </label>
+            <label>
+              Reflection
+              <textarea id="reflectionText" placeholder="What felt strong, weak, off-target, or surprisingly useful? What would you change next?"></textarea>
+            </label>
+            <div class="score-grid">
+              <label>Outcome fit
+                <select id="outcomeFit">
+                  <option value="1">1 - poor</option>
+                  <option value="2">2</option>
+                  <option value="3" selected>3 - mixed</option>
+                  <option value="4">4</option>
+                  <option value="5">5 - strong</option>
+                </select>
+              </label>
+              <label>Clarity of prompt
+                <select id="clarityRating">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3" selected>3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+              </label>
+              <label>Structure of prompt
+                <select id="structureRating">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3" selected>3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+              </label>
+              <label>Strategic usefulness
+                <select id="strategicRating">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3" selected>3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+              </label>
+            </div>
+            <div class="row">
+              <label>Confidence after the rep
+                <input id="confidenceAfter" type="number" min="1" max="5" value="3" />
+              </label>
+              <label>Main improvement focus
+                <input id="improvementFocus" value="clarity" placeholder="clarity, structure, context depth, tradeoffs" />
+              </label>
+            </div>
+            <div class="actions">
+              <button class="primary" type="submit">Get coaching + log rep</button>
+              <button class="secondary" type="button" id="refreshTask">Swap scenario</button>
+            </div>
+          </form>
+          <div class="toast" id="toast"></div>
         </div>
-        <h2 id="taskTitle">Loading…</h2>
-        <p class="task-tagline" id="taskTagline"></p>
-        <div class="chips">
-          <span class="chip" id="taskLevelChip"></span>
-          <span class="chip" id="taskPointsChip"></span>
-          <span class="chip" id="taskFocusChip"></span>
+
+        <div class="card">
+          <div class="pill">Coach output</div>
+          <div class="coach-panels">
+            <div class="coach-box"><strong>Assessment</strong><p class="muted" id="coachSummary" style="margin-top:8px;">Complete a rep and the coach will assess the prompt plus your reflection.</p></div>
+            <div class="coach-box"><strong>Tweaks</strong><p class="muted" id="coachTweaks" style="margin-top:8px;">Suggested prompt improvements will appear here.</p></div>
+            <div class="coach-box"><strong>Improved prompt</strong><p class="muted" id="revisedPrompt" style="margin-top:8px;">Your revised prompt draft will appear here.</p></div>
+          </div>
+
+          <h3 style="margin-top:18px;">Recent reps</h3>
+          <div class="history-list" id="historyList"></div>
         </div>
-        <div class="task-copy">
-          <p><strong>Scenario:</strong> <span id="taskScenario"></span></p>
-          <p><strong>Your move:</strong> <span id="taskInstructions"></span></p>
-          <p class="reason" id="taskReason"></p>
-        </div>
-        <form id="taskForm">
-          <label for="responseText">Draft Gwen’s prompt</label>
-          <textarea
-            id="responseText"
-            name="responseText"
-            rows="8"
-            placeholder="Write the prompt Gwen would give the AI assistant..."
-            required
-          ></textarea>
-          <label for="feedbackText">Quick reflection from Gwen</label>
-          <textarea
-            id="feedbackText"
-            name="feedbackText"
-            rows="3"
-            placeholder="What felt useful, awkward, or worth improving?"
-            required
-          ></textarea>
-          <button class="primary" type="submit">Complete drill</button>
-        </form>
       </section>
+    </div>
 
-      <section class="card footer-card">
-        <div>
-          <p class="eyebrow">Momentum</p>
-          <p id="summaryLine">Loading progress…</p>
-        </div>
-        <div id="badgeList" class="badge-list"></div>
-      </section>
-    </main>
+    <script>
+      let currentTask = null;
 
-    <template id="badgeTemplate">
-      <span class="badge-pill"></span>
-    </template>
+      async function fetchJson(url, options) {
+        const response = await fetch(url, options);
+        if (!response.ok) {
+          throw new Error(await response.text() || 'Request failed');
+        }
+        return response.json();
+      }
 
-    <script src="/app.js"></script>
+      function showToast(message) {
+        const el = document.getElementById('toast');
+        el.style.display = 'block';
+        el.textContent = message;
+      }
+
+      function renderTask(task, rationale, source) {
+        currentTask = task;
+        document.getElementById('taskTitle').textContent = task.title;
+        document.getElementById('taskMeta').textContent = `${task.domain} · level ${task.levelMin}+ · difficulty ${task.difficulty}/5`;
+        document.getElementById('taskBrief').textContent = task.promptBrief;
+        document.getElementById('learnerGoal').textContent = task.learnerGoal;
+        document.getElementById('reflectionHint').textContent = task.reflectionHint;
+        document.getElementById('taskRationale').textContent = rationale;
+        document.getElementById('taskSource').textContent = source;
+        document.getElementById('taskChips').innerHTML = [
+          `<span class="chip">${task.skillFocus}</span>`,
+          `<span class="chip">${task.xpReward} XP</span>`
+        ].join('');
+      }
+
+      function renderBadges(badges) {
+        document.getElementById('badgeCount').textContent = badges.length;
+        const el = document.getElementById('badgeList');
+        if (!badges.length) {
+          el.innerHTML = '<span class="muted">No badges yet. The first one comes fast.</span>';
+          return;
+        }
+        el.innerHTML = badges.map(b => `<span class="badge" title="${b.description}">${b.label}</span>`).join('');
+      }
+
+      function renderHistory(items) {
+        const el = document.getElementById('historyList');
+        if (!items.length) {
+          el.innerHTML = '<div class="history"><strong>No reps yet.</strong><small>Finish the first one and the adaptation loop starts.</small></div>';
+          return;
+        }
+        el.innerHTML = items.map(item => `
+          <div class="history">
+            <strong>${item.taskTitle}</strong>
+            <small>${item.domain} · +${item.xpAwarded} XP${item.badgeUnlocked ? ' · badge: ' + item.badgeUnlocked : ''}</small>
+            <p class="muted" style="margin-top:8px;">${item.coachSummary}</p>
+            <small>focus: ${item.improvementFocus} · outcome ${item.outcomeFit}/5 · clarity ${item.clarityRating}/5</small>
+          </div>
+        `).join('');
+      }
+
+      function renderBootstrap(data) {
+        document.getElementById('level').textContent = data.profile.level;
+        document.getElementById('xp').textContent = data.profile.xp;
+        document.getElementById('streak').textContent = `${data.profile.streak} 🔥`;
+        document.getElementById('completedCount').textContent = data.stats.tasksCompleted;
+        document.getElementById('avgOutcome').textContent = data.stats.averageOutcomeFit;
+        document.getElementById('avgClarity').textContent = data.stats.averageClarity;
+
+        const progress = data.profile.levelProgress;
+        const pct = Math.max(4, Math.min(100, Math.round((progress.current / progress.needed) * 100)));
+        document.getElementById('progressBar').style.width = `${pct}%`;
+        document.getElementById('progressLabel').textContent = `${progress.current} / ${progress.needed} XP to next level`;
+
+        renderTask(data.today.task, data.today.rationale, data.today.source);
+        renderBadges(data.badges);
+        renderHistory(data.history);
+      }
+
+      async function load() {
+        const data = await fetchJson('/api/bootstrap');
+        renderBootstrap(data);
+      }
+
+      document.getElementById('attemptForm').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!currentTask) return;
+
+        const payload = {
+          task_id: currentTask.id,
+          prompt_text: document.getElementById('promptText').value.trim(),
+          reflection_text: document.getElementById('reflectionText').value.trim(),
+          outcome_fit: Number(document.getElementById('outcomeFit').value),
+          clarity_rating: Number(document.getElementById('clarityRating').value),
+          structure_rating: Number(document.getElementById('structureRating').value),
+          strategic_rating: Number(document.getElementById('strategicRating').value),
+          confidence_after: Number(document.getElementById('confidenceAfter').value),
+          improvement_focus: document.getElementById('improvementFocus').value.trim(),
+        };
+
+        if (payload.prompt_text.length < 20 || payload.reflection_text.length < 20) {
+          showToast('Give the app a real prompt and a real reflection so the coaching has something to work with.');
+          return;
+        }
+
+        const data = await fetchJson('/api/task/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        document.getElementById('coachSummary').textContent = data.coaching.summary;
+        document.getElementById('coachTweaks').textContent = data.coaching.tweaks;
+        document.getElementById('revisedPrompt').textContent = data.coaching.revisedPrompt;
+        document.getElementById('promptText').value = '';
+        document.getElementById('reflectionText').value = '';
+        showToast(data.celebration);
+        await load();
+      });
+
+      document.getElementById('refreshTask').addEventListener('click', async () => {
+        const data = await fetchJson('/api/task/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        renderTask(data.today.task, data.today.rationale, data.today.source);
+        showToast('Fresh scenario loaded.');
+      });
+
+      load().catch((error) => {
+        showToast(`Could not load app: ${error.message}`);
+      });
+    </script>
   </body>
 </html>
