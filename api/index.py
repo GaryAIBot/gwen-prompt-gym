@@ -248,6 +248,7 @@ class CompleteAttemptIn(BaseModel):
     strategic_rating: int = Field(ge=1, le=5)
     confidence_after: int = Field(ge=1, le=5)
     improvement_focus: str = Field(min_length=3, max_length=80)
+    feedback_mode: str = Field(default="quick_coach", pattern="^(quick_coach|sharp_reviewer|strategic_mentor)$")
 
 
 class RefreshTaskIn(BaseModel):
@@ -267,10 +268,13 @@ class RecommendationResult:
 
 @dataclass
 class CoachingResult:
-    summary: str
-    tweaks: str
+    verdict: str
+    strongest: str
+    missing: str
+    why_matters: str
     revised_prompt: str
     source: str
+    mode: str
 
 
 @dataclass
@@ -650,44 +654,76 @@ def create_prompt_quest(session: Session, profile: LearnerProfile, prompt_text: 
 
 
 def heuristic_coaching(task: ScenarioTask, payload: CompleteAttemptIn) -> CoachingResult:
+    mode = payload.feedback_mode
     strengths = []
     gaps = []
-    if len(payload.prompt_text) > 220:
-        strengths.append("You gave the AI meaningful context instead of a one-liner.")
-    else:
-        gaps.append("Feed more context. Right now the AI has too little of the real management situation to work with.")
-    if "\n" in payload.prompt_text or ":" in payload.prompt_text:
-        strengths.append("You gave the prompt some structure rather than leaving it shapeless.")
-    else:
-        gaps.append("Ask for a concrete output shape: options, recommendation, risks, and next steps.")
-    if payload.strategic_rating <= 3:
-        gaps.append("Push harder on tradeoffs, risks, and decision relevance.")
-    if payload.clarity_rating <= 3:
-        gaps.append("State the audience and intended end-use more explicitly.")
+    if payload.clarity_rating >= 4:
+        strengths.append("The result sounds understandable enough to use without heavy decoding.")
+    if payload.structure_rating >= 4:
+        strengths.append("The result seems organized enough to reuse quickly.")
     if payload.outcome_fit >= 4:
-        strengths.append("Your self-rating says the prompt was already moving toward useful output.")
+        strengths.append("The answer appears reasonably on-target for the real task.")
+    if payload.strategic_rating >= 4:
+        strengths.append("The answer seems to carry some real judgment rather than empty polish.")
+    if payload.confidence_after >= 4:
+        strengths.append("The output looks usable enough to move the work forward.")
 
-    summary = " ".join(strengths[:2] + gaps[:2]) or "Solid rep. Tighten audience, decision, and output shape to make the next run stronger."
-    tweaks = "- Name the audience and decision context.\n- Add 2-3 real constraints or sensitivities.\n- Ask for options, tradeoffs, and a recommendation format."
+    if payload.clarity_rating <= 3:
+        gaps.append("The answer likely still lacks crispness and may be making you work too hard to understand it.")
+    if payload.structure_rating <= 3:
+        gaps.append("The answer likely needs a clearer shape so the reader can scan and act faster.")
+    if payload.outcome_fit <= 3:
+        gaps.append("The result may still be too generic or only partially aimed at the real task.")
+    if payload.strategic_rating <= 3:
+        gaps.append("It probably does not surface enough tradeoffs, risks, or decision logic.")
+    if payload.confidence_after <= 3:
+        gaps.append("It may still need too much rewriting before it becomes useful in real work.")
+
+    verdict_map = {
+        "quick_coach": "Promising rep, but the result still needs a sharper frame to become reliably useful.",
+        "sharp_reviewer": "The result is not tight enough yet; it still sounds more serviceable than strong.",
+        "strategic_mentor": "The result may read well enough, but it still needs more decision value to earn trust in leadership work.",
+    }
+    strongest = strengths[0] if strengths else "You at least generated something concrete enough to evaluate instead of guessing in the abstract."
+    missing_map = {
+        "quick_coach": " ".join(gaps[:2]) or "The main gap is turning a decent answer into one that is sharper and more directly usable.",
+        "sharp_reviewer": " ".join(gaps[:2]) or "The answer still lacks edge; it should be more specific, better structured, and less generic.",
+        "strategic_mentor": " ".join(gaps[:2]) or "What is still missing is stronger judgment: clearer implications, better prioritization, and more obvious decision support.",
+    }
+    why_map = {
+        "quick_coach": "If the answer is unclear, loosely structured, or generic, you lose time rewriting it and get less value from the AI run.",
+        "sharp_reviewer": "Weak output creates fake progress: it looks helpful, but you still have to do the hard thinking and cleanup yourself.",
+        "strategic_mentor": "In management work, a decent-sounding answer is not enough; if it does not clarify tradeoffs and implications, it does not really improve judgment.",
+    }
     revised_prompt = (
         f"You are helping with a {task.domain} task. Context: {task.prompt_brief} "
         f"Goal: {task.learner_goal} Audience: specify the decision-maker or stakeholder. "
-        f"Please produce: 1) key considerations, 2) 2-3 options with tradeoffs, 3) a recommendation, 4) risks or blind spots. "
+        f"Please produce: 1) a crisp answer, 2) a clear structure with headings or bullets, 3) the most relevant points only, 4) tradeoffs, risks, or implications, 5) practical next steps. "
         f"Tone: practical, concise, and suitable for real management use.\n\n"
         f"Draft to improve from:\n{payload.prompt_text.strip()}"
     )
-    return CoachingResult(summary=summary, tweaks=tweaks, revised_prompt=revised_prompt, source="heuristic")
+    return CoachingResult(
+        verdict=verdict_map[mode],
+        strongest=strongest,
+        missing=missing_map[mode],
+        why_matters=why_map[mode],
+        revised_prompt=revised_prompt,
+        source="heuristic",
+        mode=mode,
+    )
 
 
 def llm_coaching(task: ScenarioTask, payload: CompleteAttemptIn) -> CoachingResult | None:
     schema = {
         "type": "object",
         "properties": {
-            "summary": {"type": "string"},
-            "tweaks": {"type": "string"},
+            "verdict": {"type": "string"},
+            "strongest": {"type": "string"},
+            "missing": {"type": "string"},
+            "why_matters": {"type": "string"},
             "revised_prompt": {"type": "string"},
         },
-        "required": ["summary", "tweaks", "revised_prompt"],
+        "required": ["verdict", "strongest", "missing", "why_matters", "revised_prompt"],
         "additionalProperties": False,
     }
     prompt_payload = {
@@ -698,7 +734,7 @@ def llm_coaching(task: ScenarioTask, payload: CompleteAttemptIn) -> CoachingResu
                 "content": [
                     {
                         "type": "input_text",
-                        "text": "You are a prompt coach for strategy, leadership, and management scenarios. The learner does not share the AI output, only the original prompt and their reflection. Assess the prompt quality from what is available. Increase motivation a little: be sharp, useful, and encouraging without fluff. Respond only as JSON matching the schema."
+                        "text": "You are a prompt coach for strategy, leadership, and management scenarios. The learner does not share the AI output, only the original prompt plus their ratings and reflection of the output. Assess the likely prompt quality from that evidence. Respond only as JSON matching the schema."
                     }
                 ],
             },
@@ -718,9 +754,18 @@ def llm_coaching(task: ScenarioTask, payload: CompleteAttemptIn) -> CoachingResu
                                     "reflection_hint": task.reflection_hint,
                                 },
                                 "learner_submission": payload.model_dump(),
+                                "feedback_mode": payload.feedback_mode,
                                 "coaching_requirements": {
-                                    "summary_style": "2-4 sentences, direct and practical",
-                                    "tweaks_style": "3 bullet-like lines inside one string",
+                                    "required_structure": ["verdict", "strongest", "missing", "why_matters", "best_rewrite"],
+                                    "mode_definitions": {
+                                        "quick_coach": "fast, short feedback",
+                                        "sharp_reviewer": "direct critique, more demanding",
+                                        "strategic_mentor": "focuses on judgment, tradeoffs, stakeholder thinking"
+                                    },
+                                    "verdict_style": "one-line judgment",
+                                    "strongest_style": "name one thing working",
+                                    "missing_style": "name one or two sharp gaps",
+                                    "why_matters_style": "explain the consequence for output quality or decision quality",
                                     "revised_prompt_style": "improved full prompt the learner can paste into ChatGPT or Copilot"
                                 },
                             }
@@ -737,10 +782,13 @@ def llm_coaching(task: ScenarioTask, payload: CompleteAttemptIn) -> CoachingResu
     try:
         parsed = json.loads(extract_output_text(data) or "{}")
         return CoachingResult(
-            summary=parsed["summary"].strip(),
-            tweaks=parsed["tweaks"].strip(),
+            verdict=parsed["verdict"].strip(),
+            strongest=parsed["strongest"].strip(),
+            missing=parsed["missing"].strip(),
+            why_matters=parsed["why_matters"].strip(),
             revised_prompt=parsed["revised_prompt"].strip(),
             source="llm",
+            mode=payload.feedback_mode,
         )
     except (KeyError, TypeError, json.JSONDecodeError, AttributeError):
         return None
@@ -990,8 +1038,8 @@ def complete_task(payload: CompleteAttemptIn) -> dict[str, Any]:
             confidence_after=payload.confidence_after,
             improvement_focus=payload.improvement_focus.strip().lower(),
             xp_awarded=xp_awarded,
-            coach_summary=coaching.summary,
-            coach_tweaks=coaching.tweaks,
+            coach_summary=coaching.verdict,
+            coach_tweaks="\n\n".join([coaching.strongest, coaching.missing, coaching.why_matters]),
             revised_prompt=coaching.revised_prompt,
         )
         session.add(attempt)
@@ -1028,10 +1076,13 @@ def complete_task(payload: CompleteAttemptIn) -> dict[str, Any]:
                 "rankTitle": rank_title(new_level),
             },
             "coaching": {
-                "summary": coaching.summary,
-                "tweaks": coaching.tweaks,
+                "verdict": coaching.verdict,
+                "strongest": coaching.strongest,
+                "missing": coaching.missing,
+                "whyMatters": coaching.why_matters,
                 "revisedPrompt": coaching.revised_prompt,
                 "source": coaching.source,
+                "mode": coaching.mode,
             },
             "badgeUnlocked": badge_label,
             "xpBreakdown": bonuses,

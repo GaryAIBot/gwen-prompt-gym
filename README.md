@@ -9,7 +9,16 @@ Tiny app for deliberate prompt practice in strategy, leadership, and management 
   - **gym scenario** from the curated task pool
   - **real work prompt** generated from a prompt pasted from daily work
 - privacy-safe workflow: learner shares only the prompt used plus reflection and self-ratings
-- AI coaching returns assessment, suggested tweaks, and a revised prompt draft
+- AI coaching now returns a structured review:
+  - verdict
+  - what’s strongest
+  - what’s missing
+  - why that matters
+  - best rewrite
+- learner can choose among 3 feedback modes:
+  - **Quick coach**
+  - **Sharp reviewer**
+  - **Strategic mentor**
 - adaptive next-task selection based on history and current level
 - explicit loading states so the app signals when it is generating or loading a quest
 

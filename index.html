@@ -338,6 +338,14 @@
               Free-text reflection
               <textarea id="reflectionText" placeholder="What worked well in the answer? What felt weak, generic, or missing? What would you want improved next time?"></textarea>
             </label>
+            <label>
+              Feedback mode
+              <select id="feedbackMode">
+                <option value="quick_coach" selected>Quick coach — fast, short feedback</option>
+                <option value="sharp_reviewer">Sharp reviewer — direct critique</option>
+                <option value="strategic_mentor">Strategic mentor — judgment and tradeoffs</option>
+              </select>
+            </label>
             <div class="actions">
               <button class="primary" type="submit">Clear quest + get coaching</button>
             </div>
@@ -353,9 +361,11 @@
               <p class="muted" id="taskRationale" style="margin-top:8px;"></p>
               <p class="muted tiny" style="margin-top:8px;">Engine: <span id="taskSource">heuristic</span></p>
             </div>
-            <div class="coach-box"><strong>Assessment</strong><p class="muted" id="coachSummary" style="margin-top:8px;">Complete a rep and the coach will assess the prompt plus your reflection.</p></div>
-            <div class="coach-box" style="margin-top:12px;"><strong>Tweaks</strong><p class="muted" id="coachTweaks" style="margin-top:8px;">Suggested prompt improvements will appear here.</p></div>
-            <div class="coach-box" style="margin-top:12px;"><strong>Improved prompt</strong><p class="muted" id="revisedPrompt" style="margin-top:8px;">Your revised prompt draft will appear here.</p></div>
+            <div class="coach-box"><strong>Verdict</strong><p class="muted" id="coachVerdict" style="margin-top:8px;">Complete a rep and the coach will assess the result and your reflection.</p></div>
+            <div class="coach-box" style="margin-top:12px;"><strong>What’s strongest</strong><p class="muted" id="coachStrongest" style="margin-top:8px;">The strongest element will appear here.</p></div>
+            <div class="coach-box" style="margin-top:12px;"><strong>What’s missing</strong><p class="muted" id="coachMissing" style="margin-top:8px;">The key gaps will appear here.</p></div>
+            <div class="coach-box" style="margin-top:12px;"><strong>Why that matters</strong><p class="muted" id="coachWhy" style="margin-top:8px;">The consequence for output or decision quality will appear here.</p></div>
+            <div class="coach-box" style="margin-top:12px;"><strong>Best rewrite</strong><p class="muted" id="revisedPrompt" style="margin-top:8px;">Your improved prompt draft will appear here.</p></div>
           </div>
         </details>
 
@@ -545,6 +555,7 @@
           structure_rating: Number(document.getElementById('structureRating').value),
           strategic_rating: Number(document.getElementById('strategicRating').value),
           confidence_after: Number(document.getElementById('actionabilityRating').value),
+          feedback_mode: document.getElementById('feedbackMode').value,
         };
         payload.improvement_focus = weakestFocus(payload);
 
@@ -560,8 +571,10 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
           });
-          document.getElementById('coachSummary').textContent = data.coaching.summary;
-          document.getElementById('coachTweaks').textContent = data.coaching.tweaks;
+          document.getElementById('coachVerdict').textContent = data.coaching.verdict;
+          document.getElementById('coachStrongest').textContent = data.coaching.strongest;
+          document.getElementById('coachMissing').textContent = data.coaching.missing;
+          document.getElementById('coachWhy').textContent = data.coaching.whyMatters;
           document.getElementById('revisedPrompt').textContent = data.coaching.revisedPrompt;
           document.getElementById('promptText').value = '';
           document.getElementById('reflectionText').value = '';
