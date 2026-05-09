@@ -7,8 +7,8 @@
     <style>
       :root {
         --bg: #0b1020;
-        --panel: rgba(16, 23, 42, 0.82);
-        --panel-2: rgba(12, 18, 34, 0.9);
+        --panel: rgba(16, 23, 42, 0.86);
+        --panel-2: rgba(12, 18, 34, 0.92);
         --text: #eef2ff;
         --muted: #a7b4d6;
         --accent: #7c3aed;
@@ -23,30 +23,40 @@
         font-family: Inter, ui-sans-serif, system-ui, sans-serif;
         color: var(--text);
         background:
-          radial-gradient(circle at top left, rgba(124, 58, 237, 0.26), transparent 28%),
-          radial-gradient(circle at top right, rgba(34, 197, 94, 0.18), transparent 24%),
+          radial-gradient(circle at top left, rgba(124, 58, 237, 0.24), transparent 28%),
+          radial-gradient(circle at top right, rgba(34, 197, 94, 0.14), transparent 24%),
           linear-gradient(180deg, #0b1020, #050814 78%);
       }
-      .wrap { width: min(1200px, calc(100vw - 28px)); margin: 0 auto; padding: 24px 0 56px; }
-      .hero, .grid, .mini-grid, .score-grid, .row, .quest-grid { display: grid; gap: 18px; }
-      .hero { grid-template-columns: 1.15fr 0.85fr; }
-      .grid { grid-template-columns: 1.08fr 0.92fr; margin-top: 18px; }
-      .quest-grid { grid-template-columns: 1fr 1fr; margin-top: 18px; }
-      .card {
+      .wrap {
+        width: min(860px, calc(100vw - 24px));
+        margin: 0 auto;
+        padding: 18px 0 48px;
+      }
+      .card, details {
         background: var(--panel);
         border: 1px solid var(--line);
-        border-radius: 24px;
-        padding: 22px;
+        border-radius: 22px;
         backdrop-filter: blur(14px);
-        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.2);
       }
+      .card { padding: 20px; }
+      details { padding: 0; overflow: hidden; }
+      details + details, .stack > * + * { margin-top: 14px; }
+      summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 18px 20px;
+        font-weight: 700;
+      }
+      summary::-webkit-details-marker { display: none; }
+      .details-body { padding: 0 20px 20px; }
       .pill {
         display: inline-flex;
         align-items: center;
         gap: 8px;
         padding: 8px 12px;
         border-radius: 999px;
-        background: rgba(124, 58, 237, 0.18);
+        background: rgba(124, 58, 237, 0.16);
         color: #e9ddff;
         font-weight: 700;
         font-size: 12px;
@@ -55,13 +65,13 @@
       }
       .status-pill {
         display: none;
-        margin-bottom: 14px;
+        margin-bottom: 12px;
         align-items: center;
         gap: 10px;
         padding: 12px 14px;
-        border-radius: 16px;
+        border-radius: 14px;
         background: rgba(34, 197, 94, 0.12);
-        border: 1px solid rgba(34, 197, 94, 0.24);
+        border: 1px solid rgba(34, 197, 94, 0.22);
       }
       .spinner {
         width: 16px;
@@ -73,38 +83,83 @@
       }
       @keyframes spin { to { transform: rotate(360deg); } }
       h1, h2, h3, p { margin: 0; }
-      h1 { font-size: clamp(2rem, 4vw, 3.5rem); margin-top: 14px; }
-      .sub { color: var(--muted); line-height: 1.58; margin-top: 12px; max-width: 64ch; }
-      .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 20px; }
-      .stat, .mini, .history, .coach-box, .badge, .score-box, .quest-tile {
+      h1 { font-size: clamp(2rem, 4vw, 3.1rem); margin-top: 12px; }
+      h2 { font-size: 1.55rem; }
+      .sub { color: var(--muted); line-height: 1.55; margin-top: 10px; }
+      .hero-stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+        margin-top: 18px;
+      }
+      .stat {
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 12px;
+      }
+      .stat strong { display: block; margin-top: 4px; font-size: 1.1rem; }
+      .muted { color: var(--muted); }
+      .tiny { font-size: 12px; }
+      .progress {
+        height: 10px;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.15);
+        overflow: hidden;
+        margin-top: 12px;
+      }
+      .progress > span {
+        display: block;
+        height: 100%;
+        width: 0;
+        background: linear-gradient(90deg, var(--accent), #a855f7, var(--accent-2));
+      }
+      .mode-switch {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-top: 16px;
+      }
+      .mode-btn {
         border: 1px solid var(--line);
         background: var(--panel-2);
-        border-radius: 18px;
+        color: var(--text);
+        border-radius: 16px;
+        padding: 14px;
+        text-align: left;
+        cursor: pointer;
       }
-      .stat, .mini, .quest-tile, .score-box { padding: 16px; }
-      .stat strong, .mini strong { display: block; font-size: 1.4rem; margin-top: 6px; }
-      .muted { color: var(--muted); }
-      .progress { height: 12px; border-radius: 999px; background: rgba(148, 163, 184, 0.16); overflow: hidden; margin-top: 14px; }
-      .progress > span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), #a855f7, var(--accent-2)); }
-      .mini-grid, .score-grid { grid-template-columns: repeat(2, 1fr); margin-top: 16px; }
-      .row { grid-template-columns: repeat(2, 1fr); }
-      .task-title { font-size: 1.9rem; margin-top: 14px; }
-      .chips, .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-      .chip, .badge { padding: 8px 12px; border-radius: 999px; font-size: 13px; }
-      .chip { background: rgba(34, 197, 94, 0.13); color: #d9ffea; }
-      .badge { color: #fff3d5; background: rgba(245, 158, 11, 0.14); }
-      .brief, .coach-box, .history { padding: 16px; margin-top: 16px; line-height: 1.6; }
-      .coach-box { white-space: pre-wrap; }
-      .history-list { display: grid; gap: 12px; margin-top: 16px; }
-      .history small { color: var(--muted); display: block; margin-top: 8px; }
-      .quest-tile.active { border-color: rgba(124, 58, 237, 0.5); box-shadow: inset 0 0 0 1px rgba(124, 58, 237, 0.3); }
-      form { display: grid; gap: 14px; margin-top: 18px; }
+      .mode-btn.active {
+        border-color: rgba(124, 58, 237, 0.5);
+        box-shadow: inset 0 0 0 1px rgba(124, 58, 237, 0.3);
+      }
+      .hidden { display: none !important; }
+      .quest-meta, .chips, .actions, .mini-grid, .score-grid, .row {
+        display: grid;
+        gap: 12px;
+      }
+      .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+      .chip {
+        padding: 8px 12px;
+        border-radius: 999px;
+        font-size: 13px;
+        background: rgba(34, 197, 94, 0.12);
+        color: #d9ffea;
+      }
+      .quest-box, .mini, .coach-box, .history {
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        border-radius: 16px;
+        padding: 14px;
+      }
+      .mini-grid, .score-grid, .row { grid-template-columns: repeat(2, 1fr); }
+      form { display: grid; gap: 14px; margin-top: 16px; }
       label { display: grid; gap: 8px; color: var(--muted); font-size: 14px; }
       textarea, input, select {
         width: 100%;
         padding: 12px 14px;
         border-radius: 14px;
-        border: 1px solid rgba(148, 163, 184, 0.25);
+        border: 1px solid rgba(148, 163, 184, 0.24);
         background: rgba(5, 8, 20, 0.78);
         color: var(--text);
         font: inherit;
@@ -122,21 +177,20 @@
       .primary { color: #fff; background: linear-gradient(90deg, var(--accent), #9333ea); }
       .secondary { color: var(--text); background: rgba(148, 163, 184, 0.16); }
       .warm { color: #201100; background: linear-gradient(90deg, #f59e0b, #facc15); }
-      .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; }
       .toast {
         display: none;
         margin-top: 14px;
         padding: 14px 16px;
-        border-radius: 16px;
+        border-radius: 14px;
         background: rgba(34, 197, 94, 0.12);
         border: 1px solid rgba(34, 197, 94, 0.25);
       }
-      .coach-panels { display: grid; gap: 12px; margin-top: 18px; }
-      .tiny { font-size: 12px; }
-      .meter { margin-top: 10px; }
-      .meter span { display: block; height: 8px; border-radius: 999px; background: linear-gradient(90deg, #22c55e, #84cc16, #f59e0b); }
-      @media (max-width: 960px) {
-        .hero, .grid, .stats, .mini-grid, .score-grid, .row, .quest-grid { grid-template-columns: 1fr; }
+      .history-list { display: grid; gap: 12px; }
+      .history small { display: block; margin-top: 8px; color: var(--muted); }
+      .coach-box { white-space: pre-wrap; }
+      @media (max-width: 720px) {
+        .hero-stats, .mode-switch, .mini-grid, .score-grid, .row { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -147,75 +201,72 @@
         <strong id="statusText">Loading…</strong>
       </div>
 
-      <section class="hero">
-        <div class="card">
-          <div class="pill">Prompt gym for real work</div>
-          <h1>Gwen Prompt Gym</h1>
-          <p class="sub">Sharpen prompts for strategy, leadership, and management work without uploading sensitive outputs. Bring back only the prompt and your reflection. The app turns that into coaching, XP, badges, and better next reps.</p>
-          <div class="stats">
-            <div class="stat"><span class="muted">Rank</span><strong id="rankTitle">Prompt Rookie</strong></div>
-            <div class="stat"><span class="muted">Level</span><strong id="level">1</strong></div>
-            <div class="stat"><span class="muted">XP</span><strong id="xp">0</strong></div>
-            <div class="stat"><span class="muted">Streak</span><strong id="streak">0 🔥</strong></div>
-          </div>
-          <div class="progress"><span id="progressBar"></span></div>
-          <p class="muted" id="progressLabel" style="margin-top:10px;">0 / 140 XP</p>
+      <section class="card">
+        <div class="pill">Play</div>
+        <h1>Gwen Prompt Gym</h1>
+        <p class="sub">One quest at a time. Train prompts for strategy, leadership, and management work without uploading sensitive AI outputs.</p>
+        <div class="hero-stats">
+          <div class="stat"><span class="muted tiny">Rank</span><strong id="rankTitle">Prompt Rookie</strong></div>
+          <div class="stat"><span class="muted tiny">Level</span><strong id="level">1</strong></div>
+          <div class="stat"><span class="muted tiny">XP</span><strong id="xp">0</strong></div>
+          <div class="stat"><span class="muted tiny">Streak</span><strong id="streak">0 🔥</strong></div>
         </div>
-        <div class="card">
-          <div class="pill">Motivation loop</div>
-          <p class="sub">More game, less homework: clear quests, combo bonuses, badge chases, and real-work prompt runs when you want direct relevance.</p>
-          <div class="mini-grid">
-            <div class="mini"><strong id="completedCount">0</strong><p class="muted">quests cleared</p></div>
-            <div class="mini"><strong id="avgOutcome">0</strong><p class="muted">avg outcome fit</p></div>
-            <div class="mini"><strong id="avgClarity">0</strong><p class="muted">avg clarity score</p></div>
-            <div class="mini"><strong id="customPromptReps">0</strong><p class="muted">real-work reps</p></div>
-          </div>
-          <div class="brief">
-            <strong>Next badge target</strong>
-            <p class="muted" id="nextBadgeLabel" style="margin-top:8px;">First Rep</p>
-            <div class="meter"><span id="comboBar" style="width: 6%;"></span></div>
-            <p class="muted tiny" id="nextBadgeProgress" style="margin-top:8px;">0/1</p>
-          </div>
-          <div class="badges" id="badgeList"></div>
-        </div>
+        <div class="progress"><span id="progressBar"></span></div>
+        <p class="muted tiny" id="progressLabel" style="margin-top:10px;">0 / 140 XP to next level</p>
       </section>
 
-      <section class="card" style="margin-top:18px;">
-        <div class="pill">Choose your next rep</div>
-        <div class="quest-grid">
-          <div class="quest-tile active" id="scenarioTile">
-            <strong>Gym scenario</strong>
-            <p class="muted" style="margin-top:8px;">Use the app’s next recommended challenge and train a specific prompt skill.</p>
+      <div class="stack" style="margin-top:14px;">
+        <section class="card">
+          <div class="pill">1. Choose quest</div>
+          <div class="mode-switch">
+            <button class="mode-btn active" id="scenarioMode" type="button">
+              <strong>Gym scenario</strong>
+              <p class="muted tiny" style="margin-top:6px;">Use the app’s next recommended challenge.</p>
+            </button>
+            <button class="mode-btn" id="workMode" type="button">
+              <strong>Real work prompt</strong>
+              <p class="muted tiny" style="margin-top:6px;">Paste something from daily work and turn it into a quest.</p>
+            </button>
           </div>
-          <div class="quest-tile" id="workTile">
-            <strong>Real work prompt</strong>
-            <p class="muted" style="margin-top:8px;">Paste a prompt from daily work and the app will convert it into a live quest without asking you to describe the scenario.</p>
-            <label style="margin-top:14px;">
+          <div id="workPromptSection" class="hidden" style="margin-top:16px;">
+            <label>
               Prompt from today’s work
-              <textarea id="workPrompt" placeholder="Paste a prompt you actually used or want to improve from real work."></textarea>
+              <textarea id="workPrompt" placeholder="Paste a real prompt you used or want to improve. No separate scenario description needed."></textarea>
             </label>
-            <button class="warm" type="button" id="generateFromPrompt">Turn this into a quest</button>
+            <div class="actions" style="margin-top:12px;">
+              <button class="warm" type="button" id="generateFromPrompt">Turn this into a quest</button>
+            </div>
           </div>
-        </div>
-      </section>
+          <div class="actions" style="margin-top:16px;">
+            <button class="secondary" type="button" id="refreshTask">Load a fresh gym scenario</button>
+          </div>
+        </section>
 
-      <section class="grid">
-        <div class="card">
-          <div class="pill">Current quest</div>
-          <h2 class="task-title" id="taskTitle">Loading…</h2>
-          <p class="muted" id="taskMeta"></p>
-          <div class="chips" id="taskChips"></div>
-          <div class="brief"><strong>Quest brief</strong><p class="muted" id="taskBrief" style="margin-top:8px;"></p></div>
-          <div class="mini-grid">
-            <div class="mini"><strong>Win condition</strong><p class="muted" id="learnerGoal" style="margin-top:8px;"></p></div>
-            <div class="mini"><strong>Reflection lens</strong><p class="muted" id="reflectionHint" style="margin-top:8px;"></p></div>
+        <section class="card">
+          <div class="pill">2. Current quest</div>
+          <h2 id="taskTitle" style="margin-top:14px;">Loading…</h2>
+          <p class="muted" id="taskMeta" style="margin-top:8px;"></p>
+          <div class="chips" id="taskChips" style="margin-top:14px;"></div>
+          <div class="quest-meta" style="margin-top:14px;">
+            <div class="quest-box">
+              <strong>Quest brief</strong>
+              <p class="muted" id="taskBrief" style="margin-top:8px;"></p>
+            </div>
+            <div class="mini-grid">
+              <div class="mini">
+                <strong>Win condition</strong>
+                <p class="muted" id="learnerGoal" style="margin-top:8px;"></p>
+              </div>
+              <div class="mini">
+                <strong>Reflection lens</strong>
+                <p class="muted" id="reflectionHint" style="margin-top:8px;"></p>
+              </div>
+            </div>
           </div>
-          <div class="brief">
-            <strong>Why this quest?</strong>
-            <p class="muted" id="taskRationale" style="margin-top:8px;"></p>
-            <p class="muted tiny" style="margin-top:8px;">Engine: <span id="taskSource">heuristic</span></p>
-          </div>
+        </section>
 
+        <section class="card">
+          <div class="pill">3. Run + reflect</div>
           <form id="attemptForm">
             <label>
               Prompt you used externally
@@ -272,29 +323,57 @@
               </label>
             </div>
             <div class="actions">
-              <button class="primary" type="submit" id="submitRep">Clear quest + get coaching</button>
-              <button class="secondary" type="button" id="refreshTask">Load a fresh gym scenario</button>
+              <button class="primary" type="submit">Clear quest + get coaching</button>
             </div>
           </form>
           <div class="toast" id="toast"></div>
-        </div>
+        </section>
 
-        <div class="card">
-          <div class="pill">Coach output</div>
-          <div class="coach-panels">
+        <details id="coachSection">
+          <summary>4. Coaching</summary>
+          <div class="details-body">
+            <div class="quest-box" style="margin-bottom:12px;">
+              <strong>Why this quest?</strong>
+              <p class="muted" id="taskRationale" style="margin-top:8px;"></p>
+              <p class="muted tiny" style="margin-top:8px;">Engine: <span id="taskSource">heuristic</span></p>
+            </div>
             <div class="coach-box"><strong>Assessment</strong><p class="muted" id="coachSummary" style="margin-top:8px;">Complete a rep and the coach will assess the prompt plus your reflection.</p></div>
-            <div class="coach-box"><strong>Tweaks</strong><p class="muted" id="coachTweaks" style="margin-top:8px;">Suggested prompt improvements will appear here.</p></div>
-            <div class="coach-box"><strong>Improved prompt</strong><p class="muted" id="revisedPrompt" style="margin-top:8px;">Your revised prompt draft will appear here.</p></div>
+            <div class="coach-box" style="margin-top:12px;"><strong>Tweaks</strong><p class="muted" id="coachTweaks" style="margin-top:8px;">Suggested prompt improvements will appear here.</p></div>
+            <div class="coach-box" style="margin-top:12px;"><strong>Improved prompt</strong><p class="muted" id="revisedPrompt" style="margin-top:8px;">Your revised prompt draft will appear here.</p></div>
           </div>
+        </details>
 
-          <h3 style="margin-top:18px;">Recent quest clears</h3>
-          <div class="history-list" id="historyList"></div>
-        </div>
-      </section>
+        <details>
+          <summary>Progress</summary>
+          <div class="details-body">
+            <div class="mini-grid">
+              <div class="mini"><strong id="completedCount">0</strong><p class="muted tiny">quests cleared</p></div>
+              <div class="mini"><strong id="customPromptReps">0</strong><p class="muted tiny">real-work reps</p></div>
+              <div class="mini"><strong id="avgOutcome">0</strong><p class="muted tiny">avg outcome fit</p></div>
+              <div class="mini"><strong id="avgClarity">0</strong><p class="muted tiny">avg clarity score</p></div>
+            </div>
+            <div class="quest-box" style="margin-top:12px;">
+              <strong>Next badge target</strong>
+              <p class="muted" id="nextBadgeLabel" style="margin-top:8px;">First Rep</p>
+              <div class="progress"><span id="comboBar"></span></div>
+              <p class="muted tiny" id="nextBadgeProgress" style="margin-top:8px;">0/1</p>
+            </div>
+            <div class="chips" id="badgeList" style="margin-top:12px;"></div>
+          </div>
+        </details>
+
+        <details>
+          <summary>Recent history</summary>
+          <div class="details-body">
+            <div class="history-list" id="historyList"></div>
+          </div>
+        </details>
+      </div>
     </div>
 
     <script>
       let currentTask = null;
+      let currentMode = 'scenario';
 
       async function fetchJson(url, options) {
         const response = await fetch(url, options);
@@ -312,15 +391,16 @@
 
       function setBusy(message, busy = true) {
         const pill = document.getElementById('statusPill');
-        const text = document.getElementById('statusText');
-        text.textContent = message;
+        document.getElementById('statusText').textContent = message;
         pill.style.display = busy ? 'flex' : 'none';
-        document.querySelectorAll('button').forEach(btn => { btn.disabled = busy; });
+        document.querySelectorAll('button').forEach(btn => btn.disabled = busy);
       }
 
-      function setQuestMode(mode) {
-        document.getElementById('scenarioTile').classList.toggle('active', mode === 'scenario');
-        document.getElementById('workTile').classList.toggle('active', mode === 'work');
+      function setMode(mode) {
+        currentMode = mode;
+        document.getElementById('scenarioMode').classList.toggle('active', mode === 'scenario');
+        document.getElementById('workMode').classList.toggle('active', mode === 'work');
+        document.getElementById('workPromptSection').classList.toggle('hidden', mode !== 'work');
       }
 
       function renderTask(task, rationale, source) {
@@ -337,16 +417,16 @@
           `<span class="chip">${task.xpReward} XP base</span>`,
           task.isCustom ? `<span class="chip">real work</span>` : `<span class="chip">gym quest</span>`
         ].join('');
-        setQuestMode(task.isCustom ? 'work' : 'scenario');
+        setMode(task.isCustom ? 'work' : currentMode === 'work' ? 'work' : 'scenario');
       }
 
       function renderBadges(badges) {
         const el = document.getElementById('badgeList');
         if (!badges.length) {
-          el.innerHTML = '<span class="muted">No badges yet. First one is near.</span>';
+          el.innerHTML = '<span class="muted tiny">No badges yet. First one is near.</span>';
           return;
         }
-        el.innerHTML = badges.map(b => `<span class="badge" title="${b.description}">${b.label}</span>`).join('');
+        el.innerHTML = badges.map(b => `<span class="chip" title="${b.description}">${b.label}</span>`).join('');
       }
 
       function renderHistory(items) {
@@ -360,7 +440,6 @@
             <strong>${item.taskTitle}</strong>
             <small>${item.domain} · +${item.xpAwarded} XP${item.badgeUnlocked ? ' · badge: ' + item.badgeUnlocked : ''}${item.isCustom ? ' · real work' : ''}</small>
             <p class="muted" style="margin-top:8px;">${item.coachSummary}</p>
-            <small>focus: ${item.improvementFocus} · outcome ${item.outcomeFit}/5 · clarity ${item.clarityRating}/5 · strategy ${item.strategicRating}/5</small>
           </div>
         `).join('');
       }
@@ -398,6 +477,9 @@
         }
       }
 
+      document.getElementById('scenarioMode').addEventListener('click', () => setMode('scenario'));
+      document.getElementById('workMode').addEventListener('click', () => setMode('work'));
+
       document.getElementById('generateFromPrompt').addEventListener('click', async () => {
         const prompt = document.getElementById('workPrompt').value.trim();
         if (prompt.length < 20) {
@@ -413,6 +495,7 @@
           });
           renderTask(data.today.task, data.today.rationale, data.today.source);
           document.getElementById('promptText').value = data.prefillPrompt;
+          document.getElementById('coachSection').open = false;
           showToast(data.message);
         } catch (error) {
           showToast(`Could not generate the work quest: ${error.message}`, 'error');
@@ -455,6 +538,7 @@
           document.getElementById('promptText').value = '';
           document.getElementById('reflectionText').value = '';
           document.getElementById('workPrompt').value = '';
+          document.getElementById('coachSection').open = true;
           showToast(data.celebration);
           await load('Loading your next quest...');
         } catch (error) {
@@ -472,6 +556,7 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({})
           });
+          setMode('scenario');
           renderTask(data.today.task, data.today.rationale, data.today.source);
           showToast('Fresh gym scenario loaded.');
         } catch (error) {
