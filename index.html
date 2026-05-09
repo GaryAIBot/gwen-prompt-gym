@@ -15,6 +15,7 @@
         --accent-2: #22c55e;
         --line: rgba(148, 163, 184, 0.18);
         --warm: #f59e0b;
+        --danger: #fb7185;
       }
       * { box-sizing: border-box; }
       body {
@@ -26,14 +27,11 @@
           radial-gradient(circle at top right, rgba(34, 197, 94, 0.18), transparent 24%),
           linear-gradient(180deg, #0b1020, #050814 78%);
       }
-      .wrap {
-        width: min(1180px, calc(100vw - 28px));
-        margin: 0 auto;
-        padding: 24px 0 56px;
-      }
-      .hero, .grid { display: grid; gap: 18px; }
-      .hero { grid-template-columns: 1.2fr 0.8fr; }
-      .grid { grid-template-columns: 1.15fr 0.85fr; margin-top: 18px; }
+      .wrap { width: min(1200px, calc(100vw - 28px)); margin: 0 auto; padding: 24px 0 56px; }
+      .hero, .grid, .mini-grid, .score-grid, .row, .quest-grid { display: grid; gap: 18px; }
+      .hero { grid-template-columns: 1.15fr 0.85fr; }
+      .grid { grid-template-columns: 1.08fr 0.92fr; margin-top: 18px; }
+      .quest-grid { grid-template-columns: 1fr 1fr; margin-top: 18px; }
       .card {
         background: var(--panel);
         border: 1px solid var(--line);
@@ -55,36 +53,51 @@
         letter-spacing: 0.08em;
         text-transform: uppercase;
       }
+      .status-pill {
+        display: none;
+        margin-bottom: 14px;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: rgba(34, 197, 94, 0.12);
+        border: 1px solid rgba(34, 197, 94, 0.24);
+      }
+      .spinner {
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        border: 2px solid rgba(255,255,255,0.25);
+        border-top-color: #fff;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
       h1, h2, h3, p { margin: 0; }
       h1 { font-size: clamp(2rem, 4vw, 3.5rem); margin-top: 14px; }
-      .sub { color: var(--muted); line-height: 1.58; margin-top: 12px; max-width: 60ch; }
-      .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 20px; }
-      .stat, .mini, .history, .coach-box, .badge, .score-box {
+      .sub { color: var(--muted); line-height: 1.58; margin-top: 12px; max-width: 64ch; }
+      .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 20px; }
+      .stat, .mini, .history, .coach-box, .badge, .score-box, .quest-tile {
         border: 1px solid var(--line);
         background: var(--panel-2);
         border-radius: 18px;
       }
-      .stat { padding: 16px; }
-      .stat strong { display: block; font-size: 1.55rem; margin-top: 6px; }
+      .stat, .mini, .quest-tile, .score-box { padding: 16px; }
+      .stat strong, .mini strong { display: block; font-size: 1.4rem; margin-top: 6px; }
       .muted { color: var(--muted); }
       .progress { height: 12px; border-radius: 999px; background: rgba(148, 163, 184, 0.16); overflow: hidden; margin-top: 14px; }
       .progress > span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), #a855f7, var(--accent-2)); }
-      .mini-grid, .score-grid, .row { display: grid; gap: 12px; }
       .mini-grid, .score-grid { grid-template-columns: repeat(2, 1fr); margin-top: 16px; }
-      .mini, .score-box { padding: 14px; }
-      .task-title { font-size: 1.85rem; margin-top: 14px; }
+      .row { grid-template-columns: repeat(2, 1fr); }
+      .task-title { font-size: 1.9rem; margin-top: 14px; }
       .chips, .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-      .chip, .badge {
-        padding: 8px 12px;
-        border-radius: 999px;
-        font-size: 13px;
-      }
+      .chip, .badge { padding: 8px 12px; border-radius: 999px; font-size: 13px; }
       .chip { background: rgba(34, 197, 94, 0.13); color: #d9ffea; }
       .badge { color: #fff3d5; background: rgba(245, 158, 11, 0.14); }
       .brief, .coach-box, .history { padding: 16px; margin-top: 16px; line-height: 1.6; }
       .coach-box { white-space: pre-wrap; }
       .history-list { display: grid; gap: 12px; margin-top: 16px; }
       .history small { color: var(--muted); display: block; margin-top: 8px; }
+      .quest-tile.active { border-color: rgba(124, 58, 237, 0.5); box-shadow: inset 0 0 0 1px rgba(124, 58, 237, 0.3); }
       form { display: grid; gap: 14px; margin-top: 18px; }
       label { display: grid; gap: 8px; color: var(--muted); font-size: 14px; }
       textarea, input, select {
@@ -97,7 +110,6 @@
         font: inherit;
       }
       textarea { min-height: 120px; resize: vertical; }
-      .row { grid-template-columns: repeat(2, 1fr); }
       button {
         border: 0;
         border-radius: 14px;
@@ -106,8 +118,10 @@
         font-weight: 700;
         cursor: pointer;
       }
+      button[disabled] { opacity: 0.65; cursor: wait; }
       .primary { color: #fff; background: linear-gradient(90deg, var(--accent), #9333ea); }
       .secondary { color: var(--text); background: rgba(148, 163, 184, 0.16); }
+      .warm { color: #201100; background: linear-gradient(90deg, #f59e0b, #facc15); }
       .actions { display: flex; gap: 10px; flex-wrap: wrap; }
       .toast {
         display: none;
@@ -118,19 +132,28 @@
         border: 1px solid rgba(34, 197, 94, 0.25);
       }
       .coach-panels { display: grid; gap: 12px; margin-top: 18px; }
+      .tiny { font-size: 12px; }
+      .meter { margin-top: 10px; }
+      .meter span { display: block; height: 8px; border-radius: 999px; background: linear-gradient(90deg, #22c55e, #84cc16, #f59e0b); }
       @media (max-width: 960px) {
-        .hero, .grid, .stats, .mini-grid, .score-grid, .row { grid-template-columns: 1fr; }
+        .hero, .grid, .stats, .mini-grid, .score-grid, .row, .quest-grid { grid-template-columns: 1fr; }
       }
     </style>
   </head>
   <body>
     <div class="wrap">
+      <div class="status-pill" id="statusPill">
+        <div class="spinner"></div>
+        <strong id="statusText">Loading…</strong>
+      </div>
+
       <section class="hero">
         <div class="card">
-          <div class="pill">Prompt craft for real work</div>
+          <div class="pill">Prompt gym for real work</div>
           <h1>Gwen Prompt Gym</h1>
-          <p class="sub">Practice prompting for strategy, leadership, and management without uploading sensitive AI outputs. You only bring back your prompt and your reflection. The app coaches the next iteration and adapts what comes next.</p>
+          <p class="sub">Sharpen prompts for strategy, leadership, and management work without uploading sensitive outputs. Bring back only the prompt and your reflection. The app turns that into coaching, XP, badges, and better next reps.</p>
           <div class="stats">
+            <div class="stat"><span class="muted">Rank</span><strong id="rankTitle">Prompt Rookie</strong></div>
             <div class="stat"><span class="muted">Level</span><strong id="level">1</strong></div>
             <div class="stat"><span class="muted">XP</span><strong id="xp">0</strong></div>
             <div class="stat"><span class="muted">Streak</span><strong id="streak">0 🔥</strong></div>
@@ -139,33 +162,58 @@
           <p class="muted" id="progressLabel" style="margin-top:10px;">0 / 140 XP</p>
         </div>
         <div class="card">
-          <div class="pill">Learning signal</div>
-          <p class="sub">The app scores your growth from the prompt itself, your structured self-ratings, and the quality of your reflection. That keeps the workflow light and privacy-safe.</p>
+          <div class="pill">Motivation loop</div>
+          <p class="sub">More game, less homework: clear quests, combo bonuses, badge chases, and real-work prompt runs when you want direct relevance.</p>
           <div class="mini-grid">
-            <div class="mini"><strong id="completedCount">0</strong><p class="muted">reps completed</p></div>
+            <div class="mini"><strong id="completedCount">0</strong><p class="muted">quests cleared</p></div>
             <div class="mini"><strong id="avgOutcome">0</strong><p class="muted">avg outcome fit</p></div>
             <div class="mini"><strong id="avgClarity">0</strong><p class="muted">avg clarity score</p></div>
-            <div class="mini"><strong id="badgeCount">0</strong><p class="muted">badges earned</p></div>
+            <div class="mini"><strong id="customPromptReps">0</strong><p class="muted">real-work reps</p></div>
+          </div>
+          <div class="brief">
+            <strong>Next badge target</strong>
+            <p class="muted" id="nextBadgeLabel" style="margin-top:8px;">First Rep</p>
+            <div class="meter"><span id="comboBar" style="width: 6%;"></span></div>
+            <p class="muted tiny" id="nextBadgeProgress" style="margin-top:8px;">0/1</p>
           </div>
           <div class="badges" id="badgeList"></div>
         </div>
       </section>
 
+      <section class="card" style="margin-top:18px;">
+        <div class="pill">Choose your next rep</div>
+        <div class="quest-grid">
+          <div class="quest-tile active" id="scenarioTile">
+            <strong>Gym scenario</strong>
+            <p class="muted" style="margin-top:8px;">Use the app’s next recommended challenge and train a specific prompt skill.</p>
+          </div>
+          <div class="quest-tile" id="workTile">
+            <strong>Real work prompt</strong>
+            <p class="muted" style="margin-top:8px;">Paste a prompt from daily work and the app will convert it into a live quest without asking you to describe the scenario.</p>
+            <label style="margin-top:14px;">
+              Prompt from today’s work
+              <textarea id="workPrompt" placeholder="Paste a prompt you actually used or want to improve from real work."></textarea>
+            </label>
+            <button class="warm" type="button" id="generateFromPrompt">Turn this into a quest</button>
+          </div>
+        </div>
+      </section>
+
       <section class="grid">
         <div class="card">
-          <div class="pill">Today's scenario</div>
+          <div class="pill">Current quest</div>
           <h2 class="task-title" id="taskTitle">Loading…</h2>
           <p class="muted" id="taskMeta"></p>
           <div class="chips" id="taskChips"></div>
-          <div class="brief"><strong>Scenario</strong><p class="muted" id="taskBrief" style="margin-top:8px;"></p></div>
+          <div class="brief"><strong>Quest brief</strong><p class="muted" id="taskBrief" style="margin-top:8px;"></p></div>
           <div class="mini-grid">
-            <div class="mini"><strong>Learner goal</strong><p class="muted" id="learnerGoal" style="margin-top:8px;"></p></div>
-            <div class="mini"><strong>Reflection hint</strong><p class="muted" id="reflectionHint" style="margin-top:8px;"></p></div>
+            <div class="mini"><strong>Win condition</strong><p class="muted" id="learnerGoal" style="margin-top:8px;"></p></div>
+            <div class="mini"><strong>Reflection lens</strong><p class="muted" id="reflectionHint" style="margin-top:8px;"></p></div>
           </div>
           <div class="brief">
-            <strong>Why this next?</strong>
+            <strong>Why this quest?</strong>
             <p class="muted" id="taskRationale" style="margin-top:8px;"></p>
-            <p class="muted" style="margin-top:8px;">Engine: <span id="taskSource">heuristic</span></p>
+            <p class="muted tiny" style="margin-top:8px;">Engine: <span id="taskSource">heuristic</span></p>
           </div>
 
           <form id="attemptForm">
@@ -224,8 +272,8 @@
               </label>
             </div>
             <div class="actions">
-              <button class="primary" type="submit">Get coaching + log rep</button>
-              <button class="secondary" type="button" id="refreshTask">Swap scenario</button>
+              <button class="primary" type="submit" id="submitRep">Clear quest + get coaching</button>
+              <button class="secondary" type="button" id="refreshTask">Load a fresh gym scenario</button>
             </div>
           </form>
           <div class="toast" id="toast"></div>
@@ -239,7 +287,7 @@
             <div class="coach-box"><strong>Improved prompt</strong><p class="muted" id="revisedPrompt" style="margin-top:8px;">Your revised prompt draft will appear here.</p></div>
           </div>
 
-          <h3 style="margin-top:18px;">Recent reps</h3>
+          <h3 style="margin-top:18px;">Recent quest clears</h3>
           <div class="history-list" id="historyList"></div>
         </div>
       </section>
@@ -250,22 +298,35 @@
 
       async function fetchJson(url, options) {
         const response = await fetch(url, options);
-        if (!response.ok) {
-          throw new Error(await response.text() || 'Request failed');
-        }
+        if (!response.ok) throw new Error(await response.text() || 'Request failed');
         return response.json();
       }
 
-      function showToast(message) {
+      function showToast(message, tone = 'ok') {
         const el = document.getElementById('toast');
         el.style.display = 'block';
+        el.style.borderColor = tone === 'error' ? 'rgba(251,113,133,0.3)' : 'rgba(34,197,94,0.25)';
+        el.style.background = tone === 'error' ? 'rgba(251,113,133,0.12)' : 'rgba(34,197,94,0.12)';
         el.textContent = message;
+      }
+
+      function setBusy(message, busy = true) {
+        const pill = document.getElementById('statusPill');
+        const text = document.getElementById('statusText');
+        text.textContent = message;
+        pill.style.display = busy ? 'flex' : 'none';
+        document.querySelectorAll('button').forEach(btn => { btn.disabled = busy; });
+      }
+
+      function setQuestMode(mode) {
+        document.getElementById('scenarioTile').classList.toggle('active', mode === 'scenario');
+        document.getElementById('workTile').classList.toggle('active', mode === 'work');
       }
 
       function renderTask(task, rationale, source) {
         currentTask = task;
         document.getElementById('taskTitle').textContent = task.title;
-        document.getElementById('taskMeta').textContent = `${task.domain} · level ${task.levelMin}+ · difficulty ${task.difficulty}/5`;
+        document.getElementById('taskMeta').textContent = `${task.domain} · level ${task.levelMin}+ · difficulty ${task.difficulty}/5${task.isCustom ? ' · real-work quest' : ''}`;
         document.getElementById('taskBrief').textContent = task.promptBrief;
         document.getElementById('learnerGoal').textContent = task.learnerGoal;
         document.getElementById('reflectionHint').textContent = task.reflectionHint;
@@ -273,15 +334,16 @@
         document.getElementById('taskSource').textContent = source;
         document.getElementById('taskChips').innerHTML = [
           `<span class="chip">${task.skillFocus}</span>`,
-          `<span class="chip">${task.xpReward} XP</span>`
+          `<span class="chip">${task.xpReward} XP base</span>`,
+          task.isCustom ? `<span class="chip">real work</span>` : `<span class="chip">gym quest</span>`
         ].join('');
+        setQuestMode(task.isCustom ? 'work' : 'scenario');
       }
 
       function renderBadges(badges) {
-        document.getElementById('badgeCount').textContent = badges.length;
         const el = document.getElementById('badgeList');
         if (!badges.length) {
-          el.innerHTML = '<span class="muted">No badges yet. The first one comes fast.</span>';
+          el.innerHTML = '<span class="muted">No badges yet. First one is near.</span>';
           return;
         }
         el.innerHTML = badges.map(b => `<span class="badge" title="${b.description}">${b.label}</span>`).join('');
@@ -290,26 +352,31 @@
       function renderHistory(items) {
         const el = document.getElementById('historyList');
         if (!items.length) {
-          el.innerHTML = '<div class="history"><strong>No reps yet.</strong><small>Finish the first one and the adaptation loop starts.</small></div>';
+          el.innerHTML = '<div class="history"><strong>No quest clears yet.</strong><small>Finish the first one and the progression loop starts.</small></div>';
           return;
         }
         el.innerHTML = items.map(item => `
           <div class="history">
             <strong>${item.taskTitle}</strong>
-            <small>${item.domain} · +${item.xpAwarded} XP${item.badgeUnlocked ? ' · badge: ' + item.badgeUnlocked : ''}</small>
+            <small>${item.domain} · +${item.xpAwarded} XP${item.badgeUnlocked ? ' · badge: ' + item.badgeUnlocked : ''}${item.isCustom ? ' · real work' : ''}</small>
             <p class="muted" style="margin-top:8px;">${item.coachSummary}</p>
-            <small>focus: ${item.improvementFocus} · outcome ${item.outcomeFit}/5 · clarity ${item.clarityRating}/5</small>
+            <small>focus: ${item.improvementFocus} · outcome ${item.outcomeFit}/5 · clarity ${item.clarityRating}/5 · strategy ${item.strategicRating}/5</small>
           </div>
         `).join('');
       }
 
       function renderBootstrap(data) {
+        document.getElementById('rankTitle').textContent = data.profile.rankTitle;
         document.getElementById('level').textContent = data.profile.level;
         document.getElementById('xp').textContent = data.profile.xp;
         document.getElementById('streak').textContent = `${data.profile.streak} 🔥`;
         document.getElementById('completedCount').textContent = data.stats.tasksCompleted;
         document.getElementById('avgOutcome').textContent = data.stats.averageOutcomeFit;
         document.getElementById('avgClarity').textContent = data.stats.averageClarity;
+        document.getElementById('customPromptReps').textContent = data.stats.customPromptReps;
+        document.getElementById('nextBadgeLabel').textContent = data.nextBadge.label;
+        document.getElementById('nextBadgeProgress').textContent = data.nextBadge.progress;
+        document.getElementById('comboBar').style.width = `${Math.max(6, data.stats.comboMeter)}%`;
 
         const progress = data.profile.levelProgress;
         const pct = Math.max(4, Math.min(100, Math.round((progress.current / progress.needed) * 100)));
@@ -321,10 +388,38 @@
         renderHistory(data.history);
       }
 
-      async function load() {
-        const data = await fetchJson('/api/bootstrap');
-        renderBootstrap(data);
+      async function load(message = 'Loading your quest...') {
+        try {
+          setBusy(message, true);
+          const data = await fetchJson('/api/bootstrap');
+          renderBootstrap(data);
+        } finally {
+          setBusy('', false);
+        }
       }
+
+      document.getElementById('generateFromPrompt').addEventListener('click', async () => {
+        const prompt = document.getElementById('workPrompt').value.trim();
+        if (prompt.length < 20) {
+          showToast('Paste a real work prompt first. No scenario description needed.', 'error');
+          return;
+        }
+        try {
+          setBusy('Generating a quest from your real work prompt...', true);
+          const data = await fetchJson('/api/task/from-prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt_text: prompt })
+          });
+          renderTask(data.today.task, data.today.rationale, data.today.source);
+          document.getElementById('promptText').value = data.prefillPrompt;
+          showToast(data.message);
+        } catch (error) {
+          showToast(`Could not generate the work quest: ${error.message}`, 'error');
+        } finally {
+          setBusy('', false);
+        }
+      });
 
       document.getElementById('attemptForm').addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -343,37 +438,51 @@
         };
 
         if (payload.prompt_text.length < 20 || payload.reflection_text.length < 20) {
-          showToast('Give the app a real prompt and a real reflection so the coaching has something to work with.');
+          showToast('Give the app a real prompt and a real reflection so the coaching has something to work with.', 'error');
           return;
         }
 
-        const data = await fetchJson('/api/task/complete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-
-        document.getElementById('coachSummary').textContent = data.coaching.summary;
-        document.getElementById('coachTweaks').textContent = data.coaching.tweaks;
-        document.getElementById('revisedPrompt').textContent = data.coaching.revisedPrompt;
-        document.getElementById('promptText').value = '';
-        document.getElementById('reflectionText').value = '';
-        showToast(data.celebration);
-        await load();
+        try {
+          setBusy('Scoring your rep and generating coaching...', true);
+          const data = await fetchJson('/api/task/complete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          document.getElementById('coachSummary').textContent = data.coaching.summary;
+          document.getElementById('coachTweaks').textContent = data.coaching.tweaks;
+          document.getElementById('revisedPrompt').textContent = data.coaching.revisedPrompt;
+          document.getElementById('promptText').value = '';
+          document.getElementById('reflectionText').value = '';
+          document.getElementById('workPrompt').value = '';
+          showToast(data.celebration);
+          await load('Loading your next quest...');
+        } catch (error) {
+          showToast(`Could not clear the quest: ${error.message}`, 'error');
+        } finally {
+          setBusy('', false);
+        }
       });
 
       document.getElementById('refreshTask').addEventListener('click', async () => {
-        const data = await fetchJson('/api/task/refresh', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({})
-        });
-        renderTask(data.today.task, data.today.rationale, data.today.source);
-        showToast('Fresh scenario loaded.');
+        try {
+          setBusy('Loading a fresh gym scenario...', true);
+          const data = await fetchJson('/api/task/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          renderTask(data.today.task, data.today.rationale, data.today.source);
+          showToast('Fresh gym scenario loaded.');
+        } catch (error) {
+          showToast(`Could not load a new scenario: ${error.message}`, 'error');
+        } finally {
+          setBusy('', false);
+        }
       });
 
       load().catch((error) => {
-        showToast(`Could not load app: ${error.message}`);
+        showToast(`Could not load app: ${error.message}`, 'error');
       });
     </script>
   </body>
