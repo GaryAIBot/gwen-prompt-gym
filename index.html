@@ -101,6 +101,23 @@
       .stat strong { display: block; margin-top: 4px; font-size: 1.1rem; }
       .muted { color: var(--muted); }
       .tiny { font-size: 12px; }
+      .label-line {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .info {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        color: var(--muted);
+        font-size: 11px;
+        cursor: help;
+      }
       .progress {
         height: 10px;
         border-radius: 999px;
@@ -272,56 +289,60 @@
               Prompt you used externally
               <textarea id="promptText" placeholder="Paste the prompt you tested in ChatGPT, Copilot, or another external AI tool."></textarea>
             </label>
+            <div>
+              <p class="muted tiny" style="margin-bottom:10px;">Rate the quality of the AI result — not the prompt itself.</p>
+              <div class="score-grid">
+                <label><span class="label-line">Clarity <span class="info" title="Was the answer easy to understand and reasonably crisp?">i</span></span>
+                  <select id="clarityRating">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3" selected>3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                  </select>
+                </label>
+                <label><span class="label-line">Structure <span class="info" title="Was it logically organized and easy to use without major reshaping?">i</span></span>
+                  <select id="structureRating">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3" selected>3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                  </select>
+                </label>
+                <label><span class="label-line">Relevance <span class="info" title="Did it actually address the real task instead of drifting into generic filler?">i</span></span>
+                  <select id="relevanceRating">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3" selected>3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                  </select>
+                </label>
+                <label><span class="label-line">Strategic depth <span class="info" title="Did it surface tradeoffs, risks, nuance, or implications beyond surface-level advice?">i</span></span>
+                  <select id="strategicRating">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3" selected>3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                  </select>
+                </label>
+                <label><span class="label-line">Actionability <span class="info" title="Could you use the answer to move the work forward, or would it still need major rework?">i</span></span>
+                  <select id="actionabilityRating">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3" selected>3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                  </select>
+                </label>
+              </div>
+            </div>
             <label>
-              Reflection
-              <textarea id="reflectionText" placeholder="What felt strong, weak, off-target, or surprisingly useful? What would you change next?"></textarea>
+              Free-text reflection
+              <textarea id="reflectionText" placeholder="What worked well in the answer? What felt weak, generic, or missing? What would you want improved next time?"></textarea>
             </label>
-            <div class="score-grid">
-              <label>Outcome fit
-                <select id="outcomeFit">
-                  <option value="1">1 - poor</option>
-                  <option value="2">2</option>
-                  <option value="3" selected>3 - mixed</option>
-                  <option value="4">4</option>
-                  <option value="5">5 - strong</option>
-                </select>
-              </label>
-              <label>Clarity of prompt
-                <select id="clarityRating">
-                  <option value="1">1</option>
-                  <option value="2">2</option>
-                  <option value="3" selected>3</option>
-                  <option value="4">4</option>
-                  <option value="5">5</option>
-                </select>
-              </label>
-              <label>Structure of prompt
-                <select id="structureRating">
-                  <option value="1">1</option>
-                  <option value="2">2</option>
-                  <option value="3" selected>3</option>
-                  <option value="4">4</option>
-                  <option value="5">5</option>
-                </select>
-              </label>
-              <label>Strategic usefulness
-                <select id="strategicRating">
-                  <option value="1">1</option>
-                  <option value="2">2</option>
-                  <option value="3" selected>3</option>
-                  <option value="4">4</option>
-                  <option value="5">5</option>
-                </select>
-              </label>
-            </div>
-            <div class="row">
-              <label>Confidence after the rep
-                <input id="confidenceAfter" type="number" min="1" max="5" value="3" />
-              </label>
-              <label>Main improvement focus
-                <input id="improvementFocus" value="clarity" placeholder="clarity, structure, context depth, tradeoffs" />
-              </label>
-            </div>
             <div class="actions">
               <button class="primary" type="submit">Clear quest + get coaching</button>
             </div>
@@ -379,6 +400,18 @@
         const response = await fetch(url, options);
         if (!response.ok) throw new Error(await response.text() || 'Request failed');
         return response.json();
+      }
+
+      function weakestFocus(payload) {
+        const pairs = [
+          ['clarity', payload.clarity_rating],
+          ['structure', payload.structure_rating],
+          ['relevance', payload.outcome_fit],
+          ['strategic depth', payload.strategic_rating],
+          ['actionability', payload.confidence_after],
+        ];
+        pairs.sort((a, b) => a[1] - b[1]);
+        return pairs[0][0];
       }
 
       function showToast(message, tone = 'ok') {
@@ -512,13 +545,13 @@
           task_id: currentTask.id,
           prompt_text: document.getElementById('promptText').value.trim(),
           reflection_text: document.getElementById('reflectionText').value.trim(),
-          outcome_fit: Number(document.getElementById('outcomeFit').value),
+          outcome_fit: Number(document.getElementById('relevanceRating').value),
           clarity_rating: Number(document.getElementById('clarityRating').value),
           structure_rating: Number(document.getElementById('structureRating').value),
           strategic_rating: Number(document.getElementById('strategicRating').value),
-          confidence_after: Number(document.getElementById('confidenceAfter').value),
-          improvement_focus: document.getElementById('improvementFocus').value.trim(),
+          confidence_after: Number(document.getElementById('actionabilityRating').value),
         };
+        payload.improvement_focus = weakestFocus(payload);
 
         if (payload.prompt_text.length < 20 || payload.reflection_text.length < 20) {
           showToast('Give the app a real prompt and a real reflection so the coaching has something to work with.', 'error');
