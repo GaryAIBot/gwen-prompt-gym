@@ -101,22 +101,12 @@
       .stat strong { display: block; margin-top: 4px; font-size: 1.1rem; }
       .muted { color: var(--muted); }
       .tiny { font-size: 12px; }
-      .label-line {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .info {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 18px;
-        height: 18px;
-        border-radius: 999px;
-        border: 1px solid rgba(148, 163, 184, 0.28);
+      .help-text {
+        display: block;
+        margin-top: 4px;
         color: var(--muted);
-        font-size: 11px;
-        cursor: help;
+        font-size: 12px;
+        line-height: 1.35;
       }
       .progress {
         height: 10px;
@@ -292,7 +282,8 @@
             <div>
               <p class="muted tiny" style="margin-bottom:10px;">Rate the quality of the AI result — not the prompt itself.</p>
               <div class="score-grid">
-                <label><span class="label-line">Clarity <span class="info" title="Was the answer easy to understand and reasonably crisp?">i</span></span>
+                <label>Clarity
+                  <span class="help-text">Was the answer easy to understand and reasonably crisp?</span>
                   <select id="clarityRating">
                     <option value="1">1</option>
                     <option value="2">2</option>
@@ -301,7 +292,8 @@
                     <option value="5">5</option>
                   </select>
                 </label>
-                <label><span class="label-line">Structure <span class="info" title="Was it logically organized and easy to use without major reshaping?">i</span></span>
+                <label>Structure
+                  <span class="help-text">Was it logically organized and easy to use without major reshaping?</span>
                   <select id="structureRating">
                     <option value="1">1</option>
                     <option value="2">2</option>
@@ -310,7 +302,8 @@
                     <option value="5">5</option>
                   </select>
                 </label>
-                <label><span class="label-line">Relevance <span class="info" title="Did it actually address the real task instead of drifting into generic filler?">i</span></span>
+                <label>Relevance
+                  <span class="help-text">Did it actually address the real task instead of drifting into generic filler?</span>
                   <select id="relevanceRating">
                     <option value="1">1</option>
                     <option value="2">2</option>
@@ -319,7 +312,8 @@
                     <option value="5">5</option>
                   </select>
                 </label>
-                <label><span class="label-line">Strategic depth <span class="info" title="Did it surface tradeoffs, risks, nuance, or implications beyond surface-level advice?">i</span></span>
+                <label>Strategic depth
+                  <span class="help-text">Did it surface tradeoffs, risks, nuance, or implications beyond surface-level advice?</span>
                   <select id="strategicRating">
                     <option value="1">1</option>
                     <option value="2">2</option>
@@ -328,7 +322,8 @@
                     <option value="5">5</option>
                   </select>
                 </label>
-                <label><span class="label-line">Actionability <span class="info" title="Could you use the answer to move the work forward, or would it still need major rework?">i</span></span>
+                <label>Actionability
+                  <span class="help-text">Could you use the answer to move the work forward, or would it still need major rework?</span>
                   <select id="actionabilityRating">
                     <option value="1">1</option>
                     <option value="2">2</option>
